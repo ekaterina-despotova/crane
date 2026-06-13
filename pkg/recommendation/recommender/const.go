@@ -18,4 +18,10 @@ const (
 
 	// ServiceRecommender name
 	ServiceRecommender string = "Service"
+
+	// CarbonIdleResourceRecommender name
+	CarbonIdleResourceRecommender string = "CarbonIdleResource"
+
+	// CarbonRightSizingRecommender name
+	CarbonRightSizingRecommender string = "CarbonRightSizing"
 )

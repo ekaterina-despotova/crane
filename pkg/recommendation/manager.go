@@ -18,6 +18,9 @@ import (
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/resource"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/service"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/volume"
+
+	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonidle"
+	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonrightsize"
 )
 
 type RecommenderManager interface {

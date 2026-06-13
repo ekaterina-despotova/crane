@@ -10,14 +10,16 @@ ARG BUILD
 WORKDIR /go/src/github.com/gocrane/crane
 
 # Add build deps
-RUN apk add build-base
+RUN apk add build-base git
 
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
 # cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer
-RUN if [[ "${BUILD}" != "CI" ]]; then go env -w GOPROXY=https://goproxy.io,direct; fi
+RUN if [[ "${BUILD}" != "CI" ]]; then go env -w GOPROXY=https://proxy.golang.org,https://goproxy.io,direct; fi
+ENV GONOSUMCHECK=github.com/lyft/*
+ENV GONOSUMDB=github.com/lyft/*
 RUN go env
 RUN go mod download
 

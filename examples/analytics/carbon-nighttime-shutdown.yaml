@@ -1,0 +1,107 @@
+# Carbon Efficiency: Nighttime Workload Shutdown
+# Scales non-critical Deployments to 0 replicas at 22:00 and restores at 07:00.
+# Apply to a dedicated namespace or label-select workloads marked for nighttime shutdown.
+#
+# Prerequisites:
+#   - ServiceAccount with permissions to patch deployments (RBAC below)
+#   - Label target deployments with: carbon-policy/nighttime-shutdown: "true"
+#
+# Timezone: Adjust schedule fields for your cluster's timezone (cron uses UTC by default).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: carbon-nighttime-scaler
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: carbon-nighttime-scaler
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: carbon-nighttime-scaler
+subjects:
+  - kind: ServiceAccount
+    name: carbon-nighttime-scaler
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: carbon-nighttime-scaler
+  apiGroup: rbac.authorization.k8s.io
+---
+# Scale to 0 at 22:00 UTC every day
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: carbon-nighttime-scale-down
+  namespace: default
+spec:
+  schedule: "0 22 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: carbon-nighttime-scaler
+          restartPolicy: OnFailure
+          containers:
+            - name: scaler
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  for deploy in $(kubectl get deployments -A \
+                    -l carbon-policy/nighttime-shutdown=true \
+                    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'); do
+                    ns=$(echo "$deploy" | cut -d/ -f1)
+                    name=$(echo "$deploy" | cut -d/ -f2)
+                    # Save current replicas as annotation before scaling down
+                    current=$(kubectl get deployment "$name" -n "$ns" -o jsonpath='{.spec.replicas}')
+                    kubectl annotate deployment "$name" -n "$ns" \
+                      carbon-policy/pre-shutdown-replicas="$current" --overwrite
+                    kubectl scale deployment "$name" -n "$ns" --replicas=0
+                    echo "Scaled down $ns/$name from $current to 0"
+                  done
+---
+# Restore at 07:00 UTC every day
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: carbon-nighttime-scale-up
+  namespace: default
+spec:
+  schedule: "0 7 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: carbon-nighttime-scaler
+          restartPolicy: OnFailure
+          containers:
+            - name: scaler
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  for deploy in $(kubectl get deployments -A \
+                    -l carbon-policy/nighttime-shutdown=true \
+                    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'); do
+                    ns=$(echo "$deploy" | cut -d/ -f1)
+                    name=$(echo "$deploy" | cut -d/ -f2)
+                    # Restore replicas from annotation
+                    replicas=$(kubectl get deployment "$name" -n "$ns" \
+                      -o jsonpath='{.metadata.annotations.carbon-policy/pre-shutdown-replicas}')
+                    if [ -z "$replicas" ] || [ "$replicas" = "0" ]; then
+                      replicas=1
+                    fi
+                    kubectl scale deployment "$name" -n "$ns" --replicas="$replicas"
+                    echo "Scaled up $ns/$name to $replicas"
+                  done

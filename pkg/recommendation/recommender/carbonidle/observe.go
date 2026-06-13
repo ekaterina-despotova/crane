@@ -1,0 +1,67 @@
+package carbonidle
+
+import (
+	"fmt"
+	"strings"
+
+	"k8s.io/klog/v2"
+
+	"github.com/gocrane/crane/pkg/recommendation/framework"
+)
+
+// Observe records the idle resource count and estimated energy savings in the Recommendation status.
+func (r *CarbonIdleResourceRecommender) Observe(ctx *framework.RecommendationContext) error {
+	if ctx.Recommendation.Status.Action != "Delete" {
+		return nil
+	}
+
+	idleCount := countIdleResources(ctx.Recommendation.Status.Description)
+	estimatedSavingsWatts := r.estimateEnergySavings(ctx)
+
+	observation := fmt.Sprintf("Observation: %d idle resource(s) detected, estimated energy savings: %.2fW",
+		idleCount, estimatedSavingsWatts)
+
+	if ctx.Recommendation.Status.Description != "" {
+		ctx.Recommendation.Status.Description += "; " + observation
+	} else {
+		ctx.Recommendation.Status.Description = observation
+	}
+
+	klog.Infof("%s: %s for %s/%s", r.Name(), observation,
+		ctx.Recommendation.Spec.TargetRef.Namespace, ctx.Recommendation.Spec.TargetRef.Name)
+
+	return nil
+}
+
+// countIdleResources counts the number of idle classifications in the description.
+// Each "idle:" substring corresponds to one classified idle resource.
+func countIdleResources(description string) int {
+	return strings.Count(description, "idle:")
+}
+
+// estimateEnergySavings computes the total watts that would be saved by shutting down idle resources.
+func (r *CarbonIdleResourceRecommender) estimateEnergySavings(ctx *framework.RecommendationContext) float64 {
+	var totalSavings float64
+
+	// Sum pod-level power for idle pods.
+	podWattsList := ctx.InputValue(keyPodCPUWatts)
+	for _, pod := range ctx.Pods {
+		avgPower := r.avgPowerForPod(pod.Name, podWattsList)
+		cpuUtil := r.cpuUtilForPod(pod.Name, ctx)
+
+		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
+			totalSavings += avgPower
+		}
+	}
+
+	// For node targets, add node idle watts.
+	kind := ctx.Recommendation.Spec.TargetRef.Kind
+	if kind == "Node" {
+		nodeIdleWattsList := ctx.InputValue(keyNodeCPUIdleWatts)
+		if len(nodeIdleWattsList) > 0 && len(nodeIdleWattsList[0].Samples) > 0 {
+			totalSavings += avgSamples(nodeIdleWattsList[0].Samples)
+		}
+	}
+
+	return totalSavings
+}
