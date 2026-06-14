@@ -1,0 +1,36 @@
+name: Cleanup infrastructure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Cleanup of infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Delete k8s cluster
+        working-directory: ./terraform/deploy-kubernetes-cluster
+        run : |
+          terraform init
+          terraform destroy -auto-approve
+
