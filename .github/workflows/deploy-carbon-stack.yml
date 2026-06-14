@@ -54,7 +54,7 @@ jobs:
       - name: Checkout AKS application
         uses: actions/checkout@v4
         with:
-          repository: Azure-Samples/aks-store-demo
+          repository: ekaterina-despotova/aks-store-demo
           ref: main
           token: ${{ secrets.GH_PAT }}
           path: k8s-manifests

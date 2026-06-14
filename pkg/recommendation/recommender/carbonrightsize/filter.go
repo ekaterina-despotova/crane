@@ -33,5 +33,9 @@ func (r *CarbonRightSizingRecommender) Filter(ctx *framework.RecommendationConte
 		return err
 	}
 
+	if err := framework.RetrievePods(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }

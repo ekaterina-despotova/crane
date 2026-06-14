@@ -99,7 +99,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v3
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v4
           imagePullPolicy: Always
           env:
             - name: TZ
@@ -112,8 +112,8 @@ spec:
             - /craned
             ## Point at our kube-prometheus-stack Prometheus
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
-            ## Enable Analysis (recommendations) + TimeSeriesPrediction + Autoscaling
-            - --feature-gates=Analysis=true,TimeSeriesPrediction=true,Autoscaling=true
+            ## Enable Analysis (recommendations) + TimeSeriesPrediction
+            - --feature-gates=Analysis=true,TimeSeriesPrediction=true
             - --recommendation-configuration-file=/tmp/recommendation-config/config.yaml
             ## Disable webhooks — no TLS certs needed
             - --webhook-enabled=false
