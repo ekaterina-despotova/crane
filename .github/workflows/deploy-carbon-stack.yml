@@ -62,7 +62,7 @@ jobs:
       - name: Deploy application
         working-directory: k8s-manifests
         run: |
-          kubectl create ns pets
+          kubectl create namespace pets --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f aks-store-all-in-one.yaml -n pets
 
 
@@ -79,7 +79,12 @@ jobs:
           helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             --values deploy/monitoring/prometheus-values.yaml \
-            --wait --timeout 8m
+            --timeout 10m
+
+      - name: Wait for Prometheus operator
+        run: |
+          kubectl rollout status deployment/prometheus-kube-prometheus-operator \
+            -n monitoring --timeout=180s
 
       - name: Create kepler namespace
         run: kubectl create namespace kepler --dry-run=client -o yaml | kubectl apply -f -
@@ -94,7 +99,12 @@ jobs:
           helm upgrade --install kepler kepler/kepler \
             --namespace kepler \
             --values deploy/monitoring/kepler-values.yaml \
-            --wait --timeout 5m
+            --timeout 5m
+
+      - name: Wait for Kepler DaemonSet
+        run: |
+          kubectl rollout status daemonset/kepler \
+            -n kepler --timeout=180s
 
 
       - name: Install Crane CRDs
