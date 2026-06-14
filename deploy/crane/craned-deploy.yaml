@@ -99,7 +99,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ttl.sh/crane-carbon-v3:24h
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v1
           imagePullPolicy: Always
           env:
             - name: TZ
