@@ -31,29 +31,34 @@ const (
 	keyEnergyIdleRatio    = "kepler-energy-idle-ratio"
 )
 
-// Kepler metric availability check expression.
-const keplerAvailabilityExpr = `kepler_node_cpu_joules_total`
+// Kepler metric availability check — kepler_container_package_joules_total is the
+// primary counter exported by all Kepler versions.
+const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
 // Kepler PromQL expression templates for pod-level metrics.
+// Labels: container_namespace, pod_name. Use rate() over 5m to get instantaneous watts.
+// We sum across containers to get per-pod total.
 const (
-	keplerPodCPUJoulesExpr    = `kepler_pod_cpu_joules_total{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodCPUWattsExpr     = `kepler_pod_cpu_watts{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodGPUWattsExpr     = `kepler_pod_gpu_watts{pod_namespace="%s",pod_name=~"%s"}`
+	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
+	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
 // Kepler PromQL expression templates for container-level metrics.
+// Labels: container_namespace, pod_name, container_name.
 const (
-	keplerContainerCPUJoulesExpr = `kepler_container_cpu_joules_total{pod_namespace="%s",pod_name=~"%s"}`
-	keplerContainerCPUWattsExpr  = `kepler_container_cpu_watts{pod_namespace="%s",pod_name=~"%s"}`
-	keplerContainerGPUWattsExpr  = `kepler_container_gpu_watts{pod_namespace="%s",pod_name=~"%s"}`
+	keplerContainerCPUJoulesExpr = `kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}`
+	keplerContainerCPUWattsExpr  = `rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
+	keplerContainerGPUWattsExpr  = `rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
 )
 
 // Kepler PromQL expression templates for node-level metrics.
+// Node label: instance (node hostname). Sum across packages for total node power.
 const (
-	keplerNodeCPUJoulesExpr    = `kepler_node_cpu_joules_total{node_name="%s"}`
-	keplerNodeCPUWattsExpr     = `kepler_node_cpu_watts{node_name="%s"}`
-	keplerNodeCPUIdleWattsExpr = `kepler_node_cpu_idle_watts{node_name="%s"}`
-	keplerNodeCPUActiveWattsExpr = `kepler_node_cpu_active_watts{node_name="%s"}`
+	keplerNodeCPUJoulesExpr      = `sum by (instance) (kepler_node_package_joules_total{instance="%s",mode="dynamic"})`
+	keplerNodeCPUWattsExpr       = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
+	keplerNodeCPUIdleWattsExpr   = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="idle"}[5m]))`
+	keplerNodeCPUActiveWattsExpr = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
 )
 
 // CheckDataProviders verifies that Kepler metrics are available in Prometheus.

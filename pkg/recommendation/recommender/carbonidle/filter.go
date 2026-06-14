@@ -27,6 +27,14 @@ func (r *CarbonIdleResourceRecommender) Filter(ctx *framework.RecommendationCont
 		return err
 	}
 
+	// For workload kinds (not Node/Pod) we must retrieve Scale before RetrievePods,
+	// because GetPodsFromScale dereferences ctx.Scale.
+	if kind != "Node" && kind != "Pod" && kind != "DaemonSet" {
+		if err := framework.RetrieveScale(ctx); err != nil {
+			return err
+		}
+	}
+
 	// Retrieve pods for the target resource.
 	if err := framework.RetrievePods(ctx); err != nil {
 		return err

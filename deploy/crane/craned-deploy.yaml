@@ -1,0 +1,170 @@
+## Crane craned deployment with carbon recommenders
+## Custom image: ttl.sh/crane-carbon-28e4cc3:24h (built from local source with CarbonIdleResource + CarbonRightSizing)
+## Webhooks disabled (no cert needed), dashboard sidecar removed for simplicity
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: craned
+  namespace: crane-system
+
+---
+## Recommendation configuration ConfigMap
+## Registers all built-in recommenders PLUS the two carbon ones.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recommendation-configuration
+  namespace: crane-system
+data:
+  config.yaml: |-
+    apiVersion: analysis.crane.io/v1alpha1
+    kind: RecommendationConfiguration
+    recommenders:
+      - name: Replicas
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+      - name: Resource
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+      - name: IdleNode
+        acceptedResources:
+          - kind: Node
+            apiVersion: v1
+      - name: Volume
+        acceptedResources:
+          - kind: PersistentVolume
+            apiVersion: v1
+      - name: Service
+        acceptedResources:
+          - kind: Service
+            apiVersion: v1
+      ## Carbon recommenders (Kepler-powered)
+      - name: CarbonIdleResource
+        config:
+          energy-idle-threshold: "0.8"
+          observation-window-days: "7"
+          min-energy-watts: "0.5"
+          cpu-usage-threshold: "0.05"
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+          - kind: DaemonSet
+            apiVersion: apps/v1
+          - kind: Node
+            apiVersion: v1
+          - kind: Pod
+            apiVersion: v1
+      - name: CarbonRightSizing
+        config:
+          energy-efficiency-target: "0.7"
+          observation-window-days: "7"
+          cpu-percentile: "0.95"
+          memory-percentile: "0.95"
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+          - kind: DaemonSet
+            apiVersion: apps/v1
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: craned
+  namespace: crane-system
+  labels:
+    app: craned
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: craned
+  template:
+    metadata:
+      labels:
+        app: craned
+    spec:
+      serviceAccountName: craned
+      containers:
+        - name: craned
+          image: ttl.sh/crane-carbon-v3:24h
+          imagePullPolicy: Always
+          env:
+            - name: TZ
+              value: UTC
+            - name: CRANE_SYSTEM_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          command:
+            - /craned
+            ## Point at our kube-prometheus-stack Prometheus
+            - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
+            ## Enable Analysis (recommendations) + TimeSeriesPrediction + Autoscaling
+            - --feature-gates=Analysis=true,TimeSeriesPrediction=true,Autoscaling=true
+            - --recommendation-configuration-file=/tmp/recommendation-config/config.yaml
+            ## Disable webhooks — no TLS certs needed
+            - --webhook-enabled=false
+            ## Leader election off for single-replica dev deploy
+            - --leader-elect=false
+            ## Health probe on :8081, metrics on :8080 (defaults)
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:8080
+            - -v=4
+          volumeMounts:
+            - name: config
+              mountPath: /tmp/recommendation-config
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: recommendation-configuration
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: craned
+  namespace: crane-system
+spec:
+  selector:
+    app: craned
+  ports:
+    - name: crane-server
+      port: 8082
+      targetPort: 8082
+    - name: metrics
+      port: 8080
+      targetPort: 8080

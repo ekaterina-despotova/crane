@@ -19,22 +19,24 @@ const callerFormat = "CarbonRightSizingRecommender-%s-%s"
 
 // Input value keys for RecommendationContext.
 const (
-	keyPodCPUJoules  = "kepler-pod-cpu-joules"
-	keyPodCPUWatts   = "kepler-pod-cpu-watts"
-	keyPodGPUWatts   = "kepler-pod-gpu-watts"
-	keyCPUUsage      = "cpu-usage"
-	keyMemUsage      = "mem-usage"
+	keyPodCPUJoules     = "kepler-pod-cpu-joules"
+	keyPodCPUWatts      = "kepler-pod-cpu-watts"
+	keyPodGPUWatts      = "kepler-pod-gpu-watts"
+	keyCPUUsage         = "cpu-usage"
+	keyMemUsage         = "mem-usage"
 	keyEnergyEfficiency = "kepler-energy-efficiency-ratio"
 )
 
-// Kepler metric availability check expression.
-const keplerAvailabilityExpr = `kepler_node_cpu_joules_total`
+// Kepler metric availability check — kepler_container_package_joules_total is the
+// primary counter exported by all Kepler versions.
+const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
 // Kepler PromQL expression templates for pod-level metrics.
+// Labels: container_namespace, pod_name. rate() gives instantaneous watts.
 const (
-	keplerPodCPUJoulesExpr = `kepler_pod_cpu_joules_total{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodCPUWattsExpr  = `kepler_pod_cpu_watts{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodGPUWattsExpr  = `kepler_pod_gpu_watts{pod_namespace="%s",pod_name=~"%s"}`
+	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
+	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
 // expectedMetricKeys lists the metrics CarbonRightSizing expects to collect.

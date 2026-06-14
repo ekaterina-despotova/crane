@@ -1,0 +1,43 @@
+## Kepler helm values
+## Enables ServiceMonitor so kube-prometheus-stack auto-scrapes Kepler
+
+serviceMonitor:
+  enabled: true
+  ## Must match the prometheus operator's serviceMonitorSelector (we set it to {} = any)
+  labels:
+    release: prometheus
+
+## Kepler needs privileged + host access to read energy counters
+podSecurityContext:
+  privileged: true
+
+## Tolerate any taints so it runs on all nodes including system nodes
+tolerations:
+  - operator: Exists
+
+## Host paths needed for eBPF / kernel metrics
+extraVolumes:
+  - name: kernel-src
+    hostPath:
+      path: /usr/src/kernels
+      type: DirectoryOrCreate
+  - name: lib-modules
+    hostPath:
+      path: /lib/modules
+      type: DirectoryOrCreate
+
+extraVolumeMounts:
+  - name: kernel-src
+    mountPath: /usr/src/kernels
+    readOnly: true
+  - name: lib-modules
+    mountPath: /lib/modules
+    readOnly: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

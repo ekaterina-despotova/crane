@@ -1,0 +1,6 @@
+FROM alpine:3.18
+RUN apk add --no-cache tzdata ca-certificates
+WORKDIR /
+COPY craned-linux-amd64 /craned
+RUN chmod +x /craned
+ENTRYPOINT ["/craned"]
