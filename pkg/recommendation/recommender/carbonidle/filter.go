@@ -27,17 +27,29 @@ func (r *CarbonIdleResourceRecommender) Filter(ctx *framework.RecommendationCont
 		return err
 	}
 
-	// For workload kinds (not Node/Pod) we must retrieve Scale before RetrievePods,
-	// because GetPodsFromScale dereferences ctx.Scale.
-	if kind != "Node" && kind != "Pod" && kind != "DaemonSet" {
+	// RetrievePods dispatches based on Kind. For Deployment/StatefulSet it calls
+	// GetPodsFromScale which dereferences ctx.Scale — so we must populate Scale first.
+	// For Node/DaemonSet, RetrievePods has its own path that doesn't need Scale.
+	// For Pod, RetrievePods falls into the "else" path (GetPodsFromScale) which panics
+	// on nil Scale — so we skip RetrievePods entirely for Pod targets.
+	switch kind {
+	case "Node", "DaemonSet":
+		// These have dedicated paths in RetrievePods that don't need Scale.
+		if err := framework.RetrievePods(ctx); err != nil {
+			return err
+		}
+	case "Pod":
+		// Standalone Pod: RetrievePods would panic (nil Scale in GetPodsFromScale).
+		// The pod info comes from TargetRef; CollectData queries by pod name directly.
+		// Nothing to do here.
+	default:
+		// Deployment/StatefulSet: need Scale populated before RetrievePods.
 		if err := framework.RetrieveScale(ctx); err != nil {
 			return err
 		}
-	}
-
-	// Retrieve pods for the target resource.
-	if err := framework.RetrievePods(ctx); err != nil {
-		return err
+		if err := framework.RetrievePods(ctx); err != nil {
+			return err
+		}
 	}
 
 	return nil
