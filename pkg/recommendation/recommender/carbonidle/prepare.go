@@ -32,12 +32,12 @@ const (
 )
 
 // Kepler metric availability check — kepler_container_package_joules_total is the
-// primary counter exported by all Kepler versions.
+// primary counter exported by this Kepler version.
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
 // Kepler PromQL expression templates for pod-level metrics.
-// Labels: container_namespace, pod_name. Use rate() over 5m to get instantaneous watts.
-// We sum across containers to get per-pod total.
+// Labels: container_namespace, pod_name, mode. Use rate() over 5m to get watts.
+// Sum across containers to get per-pod total.
 const (
 	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
 	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
@@ -53,7 +53,7 @@ const (
 )
 
 // Kepler PromQL expression templates for node-level metrics.
-// Node label: instance (node hostname). Sum across packages for total node power.
+// Node label: instance. Mode label distinguishes dynamic vs idle.
 const (
 	keplerNodeCPUJoulesExpr      = `sum by (instance) (kepler_node_package_joules_total{instance="%s",mode="dynamic"})`
 	keplerNodeCPUWattsExpr       = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
@@ -68,7 +68,7 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 		return err
 	}
 
-	// Verify Kepler metrics exist by querying kepler_node_cpu_joules_total.
+	// Verify Kepler metrics exist by querying kepler_container_package_joules_total.
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
 		keplerAvailabilityExpr,
@@ -88,7 +88,7 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 		return fmt.Errorf("Prometheus connection failed: %v", err)
 	}
 	if len(tsList) == 0 {
-		return fmt.Errorf("Kepler metrics not available: kepler_node_cpu_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
+		return fmt.Errorf("Kepler metrics not available: kepler_container_package_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
 	}
 
 	return nil
