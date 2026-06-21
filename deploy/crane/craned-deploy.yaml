@@ -84,7 +84,7 @@ data:
           high-carbon-gco2: "300"
           low-carbon-gco2: "120"
           observation-window-days: "7"
-          min-energy-watts: "1.0"
+          min-energy-watts: "0.01"
         acceptedResources:
           - kind: Deployment
             apiVersion: apps/v1
@@ -118,7 +118,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v5
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v6
           imagePullPolicy: Always
           env:
             - name: TZ
@@ -132,7 +132,7 @@ spec:
             ## Point at our kube-prometheus-stack Prometheus
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
             ## Enable Analysis (recommendations) + TimeSeriesPrediction
-            - --feature-gates=Analysis=true,TimeSeriesPrediction=true
+            - --feature-gates=Analysis=true,TimeSeriesPrediction=true,Autoscaling=false
             - --recommendation-configuration-file=/tmp/recommendation-config/config.yaml
             ## Disable webhooks — no TLS certs needed
             - --webhook-enabled=false

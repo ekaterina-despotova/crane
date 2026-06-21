@@ -26,17 +26,17 @@ const (
 )
 
 // Kepler metric availability check.
-const keplerAvailabilityExpr = `kepler_container_cpu_joules_total`
+const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
 // Kepler PromQL expression templates for pod-level metrics.
 const (
-	keplerPodCPUJoulesExpr = `kepler_pod_cpu_joules_total{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodCPUWattsExpr  = `kepler_pod_cpu_watts{pod_namespace="%s",pod_name=~"%s"}`
-	keplerPodGPUWattsExpr  = `kepler_pod_gpu_watts{pod_namespace="%s",pod_name=~"%s"}`
+	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
+	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
 // Kepler PromQL expression for node-level watts (used for node targets).
-const keplerNodeCPUWattsExpr = `kepler_node_cpu_watts{node_name="%s"}`
+const keplerNodeCPUWattsExpr = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
 
 // CheckDataProviders verifies that Kepler metrics are available in Prometheus.
 func (r *CarbonLoadShiftingRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
@@ -64,7 +64,7 @@ func (r *CarbonLoadShiftingRecommender) CheckDataProviders(ctx *framework.Recomm
 		return fmt.Errorf("Prometheus connection failed: %v", err)
 	}
 	if len(tsList) == 0 {
-		return fmt.Errorf("Kepler metrics not available: kepler_container_cpu_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
+		return fmt.Errorf("Kepler metrics not available: kepler_container_package_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
 	}
 
 	return nil
