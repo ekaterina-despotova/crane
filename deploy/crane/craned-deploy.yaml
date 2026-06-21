@@ -77,6 +77,25 @@ data:
             apiVersion: apps/v1
           - kind: DaemonSet
             apiVersion: apps/v1
+      - name: CarbonLoadShifting
+        config:
+          low-carbon-start-hour: "0"
+          low-carbon-end-hour: "6"
+          high-carbon-gco2: "300"
+          low-carbon-gco2: "120"
+          observation-window-days: "7"
+          min-energy-watts: "1.0"
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+          - kind: DaemonSet
+            apiVersion: apps/v1
+          - kind: CronJob
+            apiVersion: batch/v1
+          - kind: Job
+            apiVersion: batch/v1
 
 ---
 apiVersion: apps/v1
@@ -99,7 +118,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v4
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v5
           imagePullPolicy: Always
           env:
             - name: TZ

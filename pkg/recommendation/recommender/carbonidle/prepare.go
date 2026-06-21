@@ -31,34 +31,33 @@ const (
 	keyEnergyIdleRatio    = "kepler-energy-idle-ratio"
 )
 
-// Kepler metric availability check — kepler_container_package_joules_total is the
-// primary counter exported by all Kepler versions.
-const keplerAvailabilityExpr = `kepler_container_package_joules_total`
+// Kepler metric availability check — kepler_container_cpu_joules_total is the
+// primary counter exported by Kepler.
+const keplerAvailabilityExpr = `kepler_container_cpu_joules_total`
 
 // Kepler PromQL expression templates for pod-level metrics.
-// Labels: container_namespace, pod_name. Use rate() over 5m to get instantaneous watts.
-// We sum across containers to get per-pod total.
+// Labels: pod_namespace, pod_name. Kepler exports a watts gauge directly.
 const (
-	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
-	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
-	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+	keplerPodCPUJoulesExpr = `kepler_pod_cpu_joules_total{pod_namespace="%s",pod_name=~"%s"}`
+	keplerPodCPUWattsExpr  = `kepler_pod_cpu_watts{pod_namespace="%s",pod_name=~"%s"}`
+	keplerPodGPUWattsExpr  = `kepler_pod_gpu_watts{pod_namespace="%s",pod_name=~"%s"}`
 )
 
 // Kepler PromQL expression templates for container-level metrics.
-// Labels: container_namespace, pod_name, container_name.
+// Labels: container_name, pod_id. We filter by pod_id matching pods in scope.
 const (
-	keplerContainerCPUJoulesExpr = `kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}`
-	keplerContainerCPUWattsExpr  = `rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
-	keplerContainerGPUWattsExpr  = `rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
+	keplerContainerCPUJoulesExpr = `kepler_container_cpu_joules_total{pod_id=~"%s"}`
+	keplerContainerCPUWattsExpr  = `kepler_container_cpu_watts{pod_id=~"%s"}`
+	keplerContainerGPUWattsExpr  = `kepler_container_gpu_watts{pod_id=~"%s"}`
 )
 
 // Kepler PromQL expression templates for node-level metrics.
-// Node label: instance (node hostname). Sum across packages for total node power.
+// Node label: node_name. Active/idle are separate metrics (no mode label).
 const (
-	keplerNodeCPUJoulesExpr      = `sum by (instance) (kepler_node_package_joules_total{instance="%s",mode="dynamic"})`
-	keplerNodeCPUWattsExpr       = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
-	keplerNodeCPUIdleWattsExpr   = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="idle"}[5m]))`
-	keplerNodeCPUActiveWattsExpr = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
+	keplerNodeCPUJoulesExpr      = `kepler_node_cpu_joules_total{node_name="%s"}`
+	keplerNodeCPUWattsExpr       = `kepler_node_cpu_watts{node_name="%s"}`
+	keplerNodeCPUIdleWattsExpr   = `kepler_node_cpu_idle_watts{node_name="%s"}`
+	keplerNodeCPUActiveWattsExpr = `kepler_node_cpu_active_watts{node_name="%s"}`
 )
 
 // CheckDataProviders verifies that Kepler metrics are available in Prometheus.
@@ -68,7 +67,7 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 		return err
 	}
 
-	// Verify Kepler metrics exist by querying kepler_node_cpu_joules_total.
+	// Verify Kepler metrics exist by querying kepler_container_cpu_joules_total.
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
 		keplerAvailabilityExpr,
@@ -88,7 +87,7 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 		return fmt.Errorf("Prometheus connection failed: %v", err)
 	}
 	if len(tsList) == 0 {
-		return fmt.Errorf("Kepler metrics not available: kepler_node_cpu_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
+		return fmt.Errorf("Kepler metrics not available: kepler_container_cpu_joules_total not found. Ensure Kepler is installed and exporting to Prometheus.")
 	}
 
 	return nil
@@ -148,6 +147,21 @@ func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	return result
 }
 
+// buildPodIDRegex constructs a regex matching all pod UIDs from the context.
+func buildPodIDRegex(ctx *framework.RecommendationContext) string {
+	if len(ctx.Pods) == 0 {
+		return ""
+	}
+	result := ""
+	for i, pod := range ctx.Pods {
+		if i > 0 {
+			result += "|"
+		}
+		result += string(pod.UID)
+	}
+	return result
+}
+
 // collectPodMetrics queries pod-level Kepler energy metrics.
 func (r *CarbonIdleResourceRecommender) collectPodMetrics(
 	ctx *framework.RecommendationContext,
@@ -174,13 +188,20 @@ func (r *CarbonIdleResourceRecommender) collectContainerMetrics(
 	caller, namespace, podNameRegex string,
 	start, end time.Time, step time.Duration,
 ) {
+	// For container metrics, we filter by pod_id. Build a regex from pod UIDs.
+	podIDRegex := buildPodIDRegex(ctx)
+	if podIDRegex == "" {
+		klog.Warningf("%s: no pod IDs available for container-level queries", r.Name())
+		return
+	}
+
 	containerMetrics := []struct {
 		key  string
 		expr string
 	}{
-		{keyContainerCPUJoules, fmt.Sprintf(keplerContainerCPUJoulesExpr, namespace, podNameRegex)},
-		{keyContainerCPUWatts, fmt.Sprintf(keplerContainerCPUWattsExpr, namespace, podNameRegex)},
-		{keyContainerGPUWatts, fmt.Sprintf(keplerContainerGPUWattsExpr, namespace, podNameRegex)},
+		{keyContainerCPUJoules, fmt.Sprintf(keplerContainerCPUJoulesExpr, podIDRegex)},
+		{keyContainerCPUWatts, fmt.Sprintf(keplerContainerCPUWattsExpr, podIDRegex)},
+		{keyContainerGPUWatts, fmt.Sprintf(keplerContainerGPUWattsExpr, podIDRegex)},
 	}
 
 	for _, m := range containerMetrics {

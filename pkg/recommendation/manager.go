@@ -21,6 +21,7 @@ import (
 
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonidle"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonrightsize"
+	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonshift"
 )
 
 type RecommenderManager interface {
