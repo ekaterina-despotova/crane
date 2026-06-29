@@ -124,7 +124,7 @@ jobs:
       - name: Wait for craned to be ready
         run: |
           kubectl rollout status deployment/craned \
-            -n crane-system --timeout=120s
+            -n crane-system --timeout=300s
 
       - name: Apply CarbonIdleResource rule
         run: kubectl apply -f examples/analytics/carbon-idle-rule.yaml
@@ -144,7 +144,7 @@ jobs:
             --from-file=index.html=deploy/crane/carbon-dashboard/index.html \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Fix RBAC for cluster registration
+      - name: RBAC for cluster registration
         run: |
           kubectl create clusterrolebinding craned-secrets \
             --clusterrole=admin \
