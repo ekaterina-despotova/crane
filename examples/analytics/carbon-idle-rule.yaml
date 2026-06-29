@@ -5,7 +5,7 @@ metadata:
   labels:
     analysis.crane.io/recommendation-rule-preinstall: "true"
 spec:
-  runInterval: 24h
+  runInterval: 2m
   resourceSelectors:
     - kind: Deployment
       apiVersion: apps/v1
