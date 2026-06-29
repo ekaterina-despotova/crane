@@ -4,6 +4,7 @@ metadata:
   name: craned
   namespace: crane-system
 
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
