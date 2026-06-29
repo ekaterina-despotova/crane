@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crane-dashboard-nginx
+  namespace: crane-system
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Our carbon dashboard is the main page
+        location = / {
+            return 301 /carbon/;
+        }
+
+        location /carbon/ {
+            alias /usr/share/nginx/carbon/;
+            index index.html;
+        }
+
+        # Stock Crane dashboard at /crane/
+        location /crane/ {
+            alias /usr/share/nginx/html/;
+            index index.html;
+            try_files $uri $uri/ /crane/index.html;
+        }
+
+        # Serve stock crane assets
+        location /assets/ {
+            root /usr/share/nginx/html;
+        }
+
+        location /api/ {
+            proxy_pass http://craned:8082/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
+        location /prometheus/ {
+            proxy_pass http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
+        location /grafana/ {
+            proxy_pass http://prometheus-grafana.monitoring/grafana/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crane-dashboard
+  namespace: crane-system
+  labels:
+    app: crane-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crane-dashboard
+  template:
+    metadata:
+      labels:
+        app: crane-dashboard
+    spec:
+      serviceAccountName: craned
+      containers:
+        - name: dashboard
+          image: gocrane/dashboard:v0.11.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: TZ
+              value: UTC
+            - name: CRANE_SERVER_URL
+              value: "http://craned:8082"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-kube-prometheus-prometheus.monitoring:9090"
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+            - name: carbon-dashboard
+              mountPath: /usr/share/nginx/carbon
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: crane-dashboard-nginx
+        - name: carbon-dashboard
+          configMap:
+            name: crane-carbon-dashboard
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crane-dashboard
+  namespace: crane-system
+spec:
+  selector:
+    app: crane-dashboard
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 80
+  type: ClusterIP

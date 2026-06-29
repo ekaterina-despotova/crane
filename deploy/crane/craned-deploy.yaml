@@ -1,17 +1,9 @@
-## Crane craned deployment with carbon recommenders
-## Custom image: ttl.sh/crane-carbon-28e4cc3:24h (built from local source with CarbonIdleResource + CarbonRightSizing)
-## Webhooks disabled (no cert needed), dashboard sidecar removed for simplicity
-
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: craned
   namespace: crane-system
 
----
-## Recommendation configuration ConfigMap
-## Registers all built-in recommenders PLUS the two carbon ones.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -118,7 +110,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v6
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v7
           imagePullPolicy: Always
           env:
             - name: TZ

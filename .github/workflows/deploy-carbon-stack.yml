@@ -132,6 +132,45 @@ jobs:
       - name: Apply CarbonRightSizing rule
         run: kubectl apply -f examples/analytics/carbon-rightsize-rule.yaml
 
+      - name: Apply CarbonLoadShifting rule
+        run: kubectl apply -f examples/analytics/carbon-loadshift-rule.yaml
+
+      - name: Deploy Crane Dashboard
+        run: kubectl apply -f deploy/crane/dashboard-deploy.yaml
+
+      - name: Create Carbon Dashboard ConfigMap
+        run: |
+          kubectl create configmap crane-carbon-dashboard -n crane-system \
+            --from-file=index.html=deploy/crane/carbon-dashboard/index.html \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Fix RBAC for cluster registration
+        run: |
+          kubectl create clusterrolebinding craned-secrets \
+            --clusterrole=admin \
+            --serviceaccount=crane-system:craned \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Restart dashboard to pick up ConfigMap
+        run: |
+          kubectl rollout restart deployment/crane-dashboard -n crane-system
+          kubectl rollout status deployment/crane-dashboard -n crane-system --timeout=60s
+
+      - name: Register cluster in craned
+        run: |
+          kubectl exec -n crane-system deploy/crane-dashboard -- \
+            wget -qO- --post-data='{"clusters":[{"name":"demo-carbon-aks","craneUrl":"http://craned:8082","prometheusAddress":"http://prometheus-kube-prometheus-prometheus.monitoring:9090"}]}' \
+            --header='Content-Type: application/json' \
+            http://craned:8082/api/v1/cluster || true
+
+      - name: Create Kepler Grafana dashboard
+        run: |
+          kubectl exec -n crane-system deploy/crane-dashboard -- \
+            wget -qO- --post-data='{"dashboard":{"title":"Kepler Carbon Emissions","uid":"kepler-carbon","panels":[{"id":1,"title":"Energy per Pod (Watts)","type":"timeseries","gridPos":{"h":8,"w":24,"x":0,"y":0},"targets":[{"expr":"sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{mode=\"dynamic\"}[5m]))","legendFormat":"{{container_namespace}}/{{pod_name}}"}],"datasource":{"type":"prometheus","uid":"prometheus"}},{"id":5,"title":"Energy per Container (Watts)","type":"timeseries","gridPos":{"h":8,"w":24,"x":0,"y":8},"targets":[{"expr":"rate(kepler_container_package_joules_total{mode=\"dynamic\"}[5m])","legendFormat":"{{container_namespace}}/{{pod_name}}/{{container_name}}"}],"datasource":{"type":"prometheus","uid":"prometheus"}},{"id":2,"title":"Total Cluster Energy (Watts)","type":"timeseries","gridPos":{"h":8,"w":12,"x":0,"y":16},"targets":[{"expr":"sum(rate(kepler_container_package_joules_total{mode=\"dynamic\"}[5m]))","legendFormat":"Total Cluster Watts"}],"datasource":{"type":"prometheus","uid":"prometheus"}},{"id":3,"title":"Energy per Namespace (Watts)","type":"piechart","gridPos":{"h":8,"w":12,"x":12,"y":16},"targets":[{"expr":"sum by (container_namespace) (rate(kepler_container_package_joules_total{mode=\"dynamic\"}[5m]))","legendFormat":"{{container_namespace}}"}],"datasource":{"type":"prometheus","uid":"prometheus"}},{"id":4,"title":"Node Energy (Watts)","type":"timeseries","gridPos":{"h":8,"w":24,"x":0,"y":24},"targets":[{"expr":"sum by (instance) (rate(kepler_node_package_joules_total{mode=\"dynamic\"}[5m]))","legendFormat":"{{instance}}"}],"datasource":{"type":"prometheus","uid":"prometheus"}}],"time":{"from":"now-1h","to":"now"},"refresh":"30s"},"overwrite":true}' \
+            --header='Content-Type: application/json' \
+            --header='Authorization: Basic YWRtaW46Y3JhbmUtZ3JhZmFuYQ==' \
+            http://prometheus-grafana.monitoring/grafana/api/dashboards/db || true
+
 
       - name: Verify deployment
         run: |

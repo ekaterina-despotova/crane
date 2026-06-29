@@ -1,22 +1,24 @@
-## kube-prometheus-stack values for crane + kepler integration
-## Lean install: Prometheus + node-exporter + kube-state-metrics
-## Grafana enabled with a simple password for optional dashboarding
-
 grafana:
   enabled: true
   adminPassword: "crane-grafana"
   service:
     type: ClusterIP
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_name: Main Org.
+      org_role: Viewer
+    security:
+      allow_embedding: true
+    server:
+      root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+      serve_from_sub_path: true
 
-## Prometheus configuration
 prometheus:
   prometheusSpec:
-    ## Retain 7 days of data (enough for carbon recommenders' default 7-day window)
     retention: 7d
-    ## Pick up any ServiceMonitor/PodMonitor in any namespace
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
-    ## Pick up ServiceMonitors with any labels (catches Kepler's ServiceMonitor)
     serviceMonitorSelector: {}
     podMonitorSelector: {}
     resources:
@@ -27,14 +29,11 @@ prometheus:
         cpu: 1000m
         memory: 2Gi
 
-## Node exporter – gives us baseline CPU/memory metrics crane also uses
 nodeExporter:
   enabled: true
 
-## kube-state-metrics – needed by crane recommendation controllers
 kubeStateMetrics:
   enabled: true
 
-## Alertmanager – not needed, disable to save resources
 alertmanager:
   enabled: false
