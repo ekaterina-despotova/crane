@@ -5,6 +5,10 @@
 *.so
 *.dylib
 
+# Compiled craned binary (built into the Docker image, not versioned)
+craned-linux-amd64
+bin/
+
 # Test binary, built with `go test -c`
 *.test
 

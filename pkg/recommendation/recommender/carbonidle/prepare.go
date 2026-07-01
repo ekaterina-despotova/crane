@@ -8,7 +8,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 
-	"github.com/gocrane/crane/pkg/common"
 	"github.com/gocrane/crane/pkg/metricnaming"
 	"github.com/gocrane/crane/pkg/providers"
 	"github.com/gocrane/crane/pkg/recommendation/framework"
@@ -16,7 +15,6 @@ import (
 
 const callerFormat = "CarbonIdleResourceRecommender-%s-%s"
 
-// Input value keys for RecommendationContext.
 const (
 	keyPodCPUJoules       = "kepler-pod-cpu-joules"
 	keyPodCPUWatts        = "kepler-pod-cpu-watts"
@@ -26,43 +24,34 @@ const (
 	keyContainerGPUWatts  = "kepler-container-gpu-watts"
 	keyNodeCPUJoules      = "kepler-node-cpu-joules"
 	keyNodeCPUWatts       = "kepler-node-cpu-watts"
-	keyNodeCPUIdleWatts   = "kepler-node-cpu-idle-watts"
 	keyNodeCPUActiveWatts = "kepler-node-cpu-active-watts"
-	keyEnergyIdleRatio    = "kepler-energy-idle-ratio"
 )
 
-// Kepler metric availability check — kepler_container_package_joules_total is the
-// primary counter exported by this Kepler version.
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
-// Kepler PromQL expression templates for pod-level metrics.
-// Labels: container_namespace, pod_name, mode. Use rate() over 5m to get watts.
-// Sum across containers to get per-pod total.
 const (
 	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
 	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
-// Kepler PromQL expression templates for container-level metrics.
-// Labels: container_namespace, pod_name, container_name.
 const (
 	keplerContainerCPUJoulesExpr = `kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}`
 	keplerContainerCPUWattsExpr  = `rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
 	keplerContainerGPUWattsExpr  = `rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m])`
 )
 
-// Kepler PromQL expression templates for node-level metrics.
-// Node label: instance. Mode label distinguishes dynamic vs idle.
 const (
 	keplerNodeCPUJoulesExpr      = `sum by (instance) (kepler_node_package_joules_total{instance="%s",mode="dynamic"})`
 	keplerNodeCPUWattsExpr       = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
-	keplerNodeCPUIdleWattsExpr   = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="idle"}[5m]))`
 	keplerNodeCPUActiveWattsExpr = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
 )
 
-// CheckDataProviders verifies that Kepler metrics are available in Prometheus.
-// Returns an error if Kepler is not installed or not exporting metrics.
+const (
+	keplerPodCPUWattsNoNSExpr       = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{pod_name=~"%s",mode="dynamic"}[5m]))`
+	keplerContainerCPUWattsNoNSExpr = `rate(kepler_container_package_joules_total{pod_name=~"%s",mode="dynamic"}[5m])`
+)
+
 func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
 	if err := r.BaseRecommender.CheckDataProviders(ctx); err != nil {
 		return err
@@ -102,33 +91,36 @@ func (r *CarbonIdleResourceRecommender) CollectData(ctx *framework.Recommendatio
 	step := time.Minute
 	ns := ctx.Recommendation.Spec.TargetRef.Namespace
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
+	name := ctx.Recommendation.Spec.TargetRef.Name
 
-	// Build pod name regex from retrieved pods.
-	podNameRegex := buildPodNameRegex(ctx)
-	if podNameRegex == "" && kind != "Node" {
-		return fmt.Errorf("no pods found matching selector for %s/%s", ns, ctx.Recommendation.Spec.TargetRef.Name)
-	}
+	switch kind {
+	case "Node":
+		r.collectNodeMetrics(ctx, caller, name, start, now, step)
+		podNameRegex := buildPodNameRegex(ctx)
+		if podNameRegex != "" {
+			r.queryAndStore(ctx, caller, keyPodCPUWatts,
+				fmt.Sprintf(keplerPodCPUWattsNoNSExpr, podNameRegex), start, now, step)
+			r.queryAndStore(ctx, caller, keyContainerCPUWatts,
+				fmt.Sprintf(keplerContainerCPUWattsNoNSExpr, podNameRegex), start, now, step)
+		}
+		return nil
 
-	// Collect pod-level metrics.
-	if podNameRegex != "" {
+	case "Pod":
+		r.collectPodMetrics(ctx, caller, ns, name, start, now, step)
+		r.collectContainerMetrics(ctx, caller, ns, name, start, now, step)
+		return nil
+
+	default:
+		podNameRegex := buildPodNameRegex(ctx)
+		if podNameRegex == "" {
+			return fmt.Errorf("no pods found matching selector for %s/%s", ns, name)
+		}
 		r.collectPodMetrics(ctx, caller, ns, podNameRegex, start, now, step)
-	}
-
-	// Collect container-level metrics.
-	if podNameRegex != "" {
 		r.collectContainerMetrics(ctx, caller, ns, podNameRegex, start, now, step)
+		return nil
 	}
-
-	// Collect node-level metrics for Node targets.
-	if kind == "Node" {
-		nodeName := ctx.Recommendation.Spec.TargetRef.Name
-		r.collectNodeMetrics(ctx, caller, nodeName, start, now, step)
-	}
-
-	return nil
 }
 
-// buildPodNameRegex constructs a regex matching all pod names from the context.
 func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	if len(ctx.Pods) == 0 {
 		return ""
@@ -137,7 +129,6 @@ func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	for _, pod := range ctx.Pods {
 		names = append(names, pod.Name)
 	}
-	// Join with | for regex alternation.
 	result := ""
 	for i, name := range names {
 		if i > 0 {
@@ -148,7 +139,6 @@ func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	return result
 }
 
-// collectPodMetrics queries pod-level Kepler energy metrics.
 func (r *CarbonIdleResourceRecommender) collectPodMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, podNameRegex string,
@@ -168,7 +158,6 @@ func (r *CarbonIdleResourceRecommender) collectPodMetrics(
 	}
 }
 
-// collectContainerMetrics queries container-level Kepler energy metrics.
 func (r *CarbonIdleResourceRecommender) collectContainerMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, podNameRegex string,
@@ -188,7 +177,6 @@ func (r *CarbonIdleResourceRecommender) collectContainerMetrics(
 	}
 }
 
-// collectNodeMetrics queries node-level Kepler energy metrics.
 func (r *CarbonIdleResourceRecommender) collectNodeMetrics(
 	ctx *framework.RecommendationContext,
 	caller, nodeName string,
@@ -200,7 +188,6 @@ func (r *CarbonIdleResourceRecommender) collectNodeMetrics(
 	}{
 		{keyNodeCPUJoules, fmt.Sprintf(keplerNodeCPUJoulesExpr, nodeName)},
 		{keyNodeCPUWatts, fmt.Sprintf(keplerNodeCPUWattsExpr, nodeName)},
-		{keyNodeCPUIdleWatts, fmt.Sprintf(keplerNodeCPUIdleWattsExpr, nodeName)},
 		{keyNodeCPUActiveWatts, fmt.Sprintf(keplerNodeCPUActiveWattsExpr, nodeName)},
 	}
 
@@ -209,8 +196,6 @@ func (r *CarbonIdleResourceRecommender) collectNodeMetrics(
 	}
 }
 
-// queryAndStore queries a single Kepler metric and stores the result in the context.
-// Errors are logged as warnings and the metric is skipped.
 func (r *CarbonIdleResourceRecommender) queryAndStore(
 	ctx *framework.RecommendationContext,
 	caller, key, expr string,
@@ -241,121 +226,35 @@ func (r *CarbonIdleResourceRecommender) queryAndStore(
 	ctx.AddInputValue(key, tsList)
 }
 
-// PostProcessing computes the Energy_Idle_Ratio for node targets and validates
-// that sufficient metrics are available for each resource.
+
 func (r *CarbonIdleResourceRecommender) PostProcessing(ctx *framework.RecommendationContext) error {
-	kind := ctx.Recommendation.Spec.TargetRef.Kind
-
-	// Compute Energy_Idle_Ratio for Node targets.
-	if kind == "Node" {
-		if err := r.computeEnergyIdleRatio(ctx); err != nil {
-			klog.Warningf("%s: failed to compute Energy_Idle_Ratio: %v", r.Name(), err)
-		}
-	}
-
-	// Validate metric availability: require ≥50% of expected metrics.
 	if err := r.validateMetricAvailability(ctx); err != nil {
 		return err
 	}
-
 	return nil
 }
 
-// computeEnergyIdleRatio computes the Energy_Idle_Ratio from node idle and total watts
-// and stores the result as a synthetic time series in the context.
-func (r *CarbonIdleResourceRecommender) computeEnergyIdleRatio(ctx *framework.RecommendationContext) error {
-	idleWattsList := ctx.InputValue(keyNodeCPUIdleWatts)
-	totalWattsList := ctx.InputValue(keyNodeCPUWatts)
-
-	if len(idleWattsList) == 0 || len(totalWattsList) == 0 {
-		return fmt.Errorf("missing node idle or total watts data for Energy_Idle_Ratio computation")
-	}
-
-	// Use the first time series from each (single node target).
-	idleTS := idleWattsList[0]
-	totalTS := totalWattsList[0]
-
-	if len(idleTS.Samples) == 0 || len(totalTS.Samples) == 0 {
-		return fmt.Errorf("empty samples in node watts time series")
-	}
-
-	// Build a map of timestamp -> total watts for alignment.
-	totalByTime := make(map[int64]float64, len(totalTS.Samples))
-	for _, s := range totalTS.Samples {
-		totalByTime[s.Timestamp] = s.Value
-	}
-
-	// Compute idle ratio at each aligned time point.
-	var sumRatio float64
-	var count int
-	for _, s := range idleTS.Samples {
-		total, ok := totalByTime[s.Timestamp]
-		if !ok || total <= 0 {
-			continue
-		}
-		ratio := s.Value / total
-		if ratio < 0 {
-			ratio = 0
-		}
-		if ratio > 1 {
-			ratio = 1
-		}
-		sumRatio += ratio
-		count++
-	}
-
-	if count == 0 {
-		return fmt.Errorf("no aligned time points for Energy_Idle_Ratio computation")
-	}
-
-	avgRatio := sumRatio / float64(count)
-
-	// Store as a single-sample synthetic time series.
-	ratioTS := &common.TimeSeries{
-		Labels:  []common.Label{{Name: "metric", Value: "energy_idle_ratio"}},
-		Samples: []common.Sample{{Value: avgRatio, Timestamp: time.Now().Unix()}},
-	}
-	ctx.AddInputValue(keyEnergyIdleRatio, []*common.TimeSeries{ratioTS})
-
-	klog.Infof("%s: computed Energy_Idle_Ratio = %.4f from %d aligned samples", r.Name(), avgRatio, count)
-	return nil
-}
-
-// validateMetricAvailability checks that at least 50% of expected Kepler metrics
-// are present in the context. If fewer than 50% are available, the recommendation
-// is skipped with a descriptive status.
 func (r *CarbonIdleResourceRecommender) validateMetricAvailability(ctx *framework.RecommendationContext) error {
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
 
-	var expectedKeys []string
-	if kind == "Node" {
-		expectedKeys = []string{
-			keyPodCPUJoules, keyPodCPUWatts, keyPodGPUWatts,
-			keyContainerCPUJoules, keyContainerCPUWatts, keyContainerGPUWatts,
-			keyNodeCPUJoules, keyNodeCPUWatts, keyNodeCPUIdleWatts, keyNodeCPUActiveWatts,
-		}
-	} else {
-		expectedKeys = []string{
-			keyPodCPUJoules, keyPodCPUWatts, keyPodGPUWatts,
-			keyContainerCPUJoules, keyContainerCPUWatts, keyContainerGPUWatts,
-		}
+	var required []string
+	switch kind {
+	case "Node":
+		required = []string{keyNodeCPUWatts, keyPodCPUWatts}
+	case "Pod":
+		required = []string{keyPodCPUWatts}
+	default:
+		required = []string{keyPodCPUWatts, keyContainerCPUWatts}
 	}
 
-	available := 0
-	for _, key := range expectedKeys {
-		if ts := ctx.InputValue(key); len(ts) > 0 {
-			available++
+	for _, key := range required {
+		if ts := ctx.InputValue(key); len(ts) == 0 {
+			msg := fmt.Sprintf("Insufficient energy data for %s/%s: missing %s",
+				ctx.Recommendation.Spec.TargetRef.Namespace,
+				ctx.Recommendation.Spec.TargetRef.Name, key)
+			ctx.Recommendation.Status.Description = msg
+			return fmt.Errorf(msg)
 		}
-	}
-
-	total := len(expectedKeys)
-	if total > 0 && available*2 < total {
-		msg := fmt.Sprintf("Insufficient energy data for %s/%s: only %d/%d metrics available",
-			ctx.Recommendation.Spec.TargetRef.Namespace,
-			ctx.Recommendation.Spec.TargetRef.Name,
-			available, total)
-		ctx.Recommendation.Status.Description = msg
-		return fmt.Errorf(msg)
 	}
 
 	return nil

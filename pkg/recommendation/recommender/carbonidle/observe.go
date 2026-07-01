@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"github.com/gocrane/crane/pkg/common"
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
@@ -39,27 +40,19 @@ func countIdleResources(description string) int {
 	return strings.Count(description, "idle:")
 }
 
-// estimateEnergySavings computes the total watts that would be saved by shutting down idle resources.
 func (r *CarbonIdleResourceRecommender) estimateEnergySavings(ctx *framework.RecommendationContext) float64 {
 	var totalSavings float64
 
-	// Sum pod-level power for idle pods.
 	podWattsList := ctx.InputValue(keyPodCPUWatts)
-	for _, pod := range ctx.Pods {
-		avgPower := r.avgPowerForPod(pod.Name, podWattsList)
-		cpuUtil := r.cpuUtilForPod(pod.Name, ctx)
-
+	for _, ts := range podWattsList {
+		podName := labelValue(ts, "pod_name", common.LabelNamePodName)
+		if podName == "" {
+			continue
+		}
+		avgPower := avgSamples(ts.Samples)
+		cpuUtil := r.cpuUtilForPod(podName, ctx)
 		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
 			totalSavings += avgPower
-		}
-	}
-
-	// For node targets, add node idle watts.
-	kind := ctx.Recommendation.Spec.TargetRef.Kind
-	if kind == "Node" {
-		nodeIdleWattsList := ctx.InputValue(keyNodeCPUIdleWatts)
-		if len(nodeIdleWattsList) > 0 && len(nodeIdleWattsList[0].Samples) > 0 {
-			totalSavings += avgSamples(nodeIdleWattsList[0].Samples)
 		}
 	}
 
