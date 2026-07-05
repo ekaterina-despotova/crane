@@ -11,37 +11,28 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
+// PreRecommend is a no-op for CarbonLoadShifting.
 func (r *CarbonLoadShiftingRecommender) PreRecommend(ctx *framework.RecommendationContext) error {
 	return nil
 }
 
+// Recommend analyzes the hourly energy profile and recommends temporal shifting
+// if the workload runs primarily during high-carbon hours.
+// When the Electricity Maps API key is configured (env ELECTRICITY_MAPS_API_KEY),
+// real grid carbon intensity data is used to identify optimal windows dynamically.
+// Otherwise, static config thresholds apply as fallback.
 func (r *CarbonLoadShiftingRecommender) Recommend(ctx *framework.RecommendationContext) error {
 	profileList := ctx.InputValue(keyHourlyProfile)
 	if len(profileList) == 0 || len(profileList[0].Samples) < 24 {
 		return fmt.Errorf("no hourly energy profile available for load shifting analysis")
 	}
 
-	profile := profileList[0].Samples
+	profile := profileList[0].Samples // 24 samples, one per hour
 
+	// Compute total energy.
 	var totalEnergy float64
-	var highCarbonEnergy float64
-	var lowCarbonEnergy float64
-	var peakHours []int
-
 	for _, s := range profile {
-		hour := int(s.Timestamp)
-		watts := s.Value
-		totalEnergy += watts
-
-		if r.isHighCarbonHour(hour) && watts > 0 {
-			highCarbonEnergy += watts
-			if watts > r.minEnergyWatts {
-				peakHours = append(peakHours, hour)
-			}
-		}
-		if r.isLowCarbonHour(hour) {
-			lowCarbonEnergy += watts
-		}
+		totalEnergy += s.Value
 	}
 
 	if totalEnergy <= 0 {
@@ -61,46 +52,97 @@ func (r *CarbonLoadShiftingRecommender) Recommend(ctx *framework.RecommendationC
 		return nil
 	}
 
+	// Try to get real carbon intensity data from Electricity Maps API.
+	carbonData := GetHourlyCarbonIntensity()
+
+	var lowCarbonStart, lowCarbonEnd int
+	var highCarbonGCO2, lowCarbonGCO2 float64
+	var dataSource string
+
+	if carbonData != nil {
+		// Use real API data: find the optimal 6-hour low-carbon window dynamically.
+		optStart, optAvg := carbonData.FindOptimalWindow(6)
+		_, peakAvg := carbonData.FindPeakWindow(6)
+		lowCarbonStart = optStart
+		lowCarbonEnd = (optStart + 6) % 24
+		lowCarbonGCO2 = optAvg
+		highCarbonGCO2 = peakAvg
+		dataSource = fmt.Sprintf("Electricity Maps API (zone: %s, fetched: %s)",
+			carbonData.Zone, carbonData.FetchedAt.Format("15:04 UTC"))
+	} else {
+		// Fallback: use static config values.
+		lowCarbonStart = int(r.lowCarbonStartHour)
+		lowCarbonEnd = int(r.lowCarbonEndHour)
+		highCarbonGCO2 = r.highCarbonGCO2
+		lowCarbonGCO2 = r.lowCarbonGCO2
+		dataSource = "static configuration"
+	}
+
+	// Compute energy during high-carbon hours.
+	var highCarbonEnergy float64
+	var peakHours []int
+
+	for _, s := range profile {
+		hour := int(s.Timestamp)
+		watts := s.Value
+		if !isInWindow(hour, lowCarbonStart, lowCarbonEnd) && watts > 0 {
+			highCarbonEnergy += watts
+			if watts > r.minEnergyWatts {
+				peakHours = append(peakHours, hour)
+			}
+		}
+	}
+
 	highCarbonFraction := highCarbonEnergy / totalEnergy
 
 	if highCarbonFraction < 0.3 {
 		ctx.Recommendation.Status.Action = "None"
 		ctx.Recommendation.Status.Description = fmt.Sprintf(
-			"Only %.0f%% of energy consumed during high-carbon hours — shifting not needed",
-			highCarbonFraction*100)
+			"Only %.0f%% of energy consumed during high-carbon hours — shifting not needed (data: %s)",
+			highCarbonFraction*100, dataSource)
 		return nil
 	}
 
-	currentCarbonGrams := highCarbonEnergy*r.highCarbonGCO2 + lowCarbonEnergy*r.lowCarbonGCO2
-	shiftedCarbonGrams := totalEnergy * r.lowCarbonGCO2
+	// Compute estimated carbon savings.
+	currentCarbonGrams := highCarbonEnergy*highCarbonGCO2 + (totalEnergy-highCarbonEnergy)*lowCarbonGCO2
+	shiftedCarbonGrams := totalEnergy * lowCarbonGCO2
 	savingsGrams := currentCarbonGrams - shiftedCarbonGrams
 
 	if savingsGrams <= 0 {
 		ctx.Recommendation.Status.Action = "None"
-		ctx.Recommendation.Status.Description = "No carbon savings achievable through temporal shifting"
+		ctx.Recommendation.Status.Description = fmt.Sprintf(
+			"No carbon savings achievable through temporal shifting (data: %s)", dataSource)
 		return nil
 	}
 
+	// Build the recommendation.
 	ctx.Recommendation.Status.Action = "Patch"
 	ctx.Recommendation.Status.Description = fmt.Sprintf(
-		"Temporal load shifting recommended: shift workload from high-carbon hours [%s] to low-carbon window [%02d:00-%02d:00]. "+
+		"Temporal load shifting recommended: shift workload from high-carbon hours [%s] to low-carbon window [%02d:00-%02d:00 UTC]. "+
+			"High-carbon intensity: %.1f gCO2/kWh, low-carbon intensity: %.1f gCO2/kWh. "+
 			"Current high-carbon energy: %.2fWh (%.0f%% of total). "+
-			"Estimated carbon savings: %.1f gCO₂/day (from %.1f to %.1f gCO₂/day)",
+			"Estimated carbon savings: %.1f gCO2/day (from %.1f to %.1f gCO2/day). Data source: %s",
 		formatHours(peakHours),
-		r.lowCarbonStartHour, r.lowCarbonEndHour,
+		lowCarbonStart, lowCarbonEnd,
+		highCarbonGCO2, lowCarbonGCO2,
 		highCarbonEnergy, highCarbonFraction*100,
-		savingsGrams, currentCarbonGrams, shiftedCarbonGrams)
+		savingsGrams, currentCarbonGrams, shiftedCarbonGrams,
+		dataSource)
 
+	// Generate the shift manifest.
 	manifest := ShiftManifest{
-		Recommendation:    "TemporalShift",
-		TargetWindow:      fmt.Sprintf("%02d:00-%02d:00 UTC", r.lowCarbonStartHour, r.lowCarbonEndHour),
-		CurrentPeakHours:  formatHours(peakHours),
+		Recommendation:     "TemporalShift",
+		TargetWindow:       fmt.Sprintf("%02d:00-%02d:00 UTC", lowCarbonStart, lowCarbonEnd),
+		CurrentPeakHours:   formatHours(peakHours),
 		HighCarbonFraction: highCarbonFraction,
+		DataSource:         dataSource,
 		EstimatedSavings: CarbonSavings{
-			GramsCO2PerDay:   savingsGrams,
-			CurrentGCO2:      currentCarbonGrams,
-			ShiftedGCO2:      shiftedCarbonGrams,
-			ReductionPercent: (savingsGrams / currentCarbonGrams) * 100,
+			GramsCO2PerDay:      savingsGrams,
+			CurrentGCO2:         currentCarbonGrams,
+			ShiftedGCO2:         shiftedCarbonGrams,
+			ReductionPercent:    (savingsGrams / currentCarbonGrams) * 100,
+			HighCarbonIntensity: highCarbonGCO2,
+			LowCarbonIntensity:  lowCarbonGCO2,
 		},
 		EnergyProfile: buildEnergyProfileMap(profile),
 	}
@@ -122,31 +164,27 @@ func (r *CarbonLoadShiftingRecommender) Recommend(ctx *framework.RecommendationC
 	}
 	ctx.Recommendation.Status.CurrentInfo = string(currentBytes)
 
-	klog.Infof("%s: recommending temporal shift for %s/%s, savings: %.1f gCO₂/day",
+	klog.Infof("%s: recommending temporal shift for %s/%s, savings: %.1f gCO2/day (source: %s)",
 		r.Name(), ctx.Recommendation.Spec.TargetRef.Namespace,
-		ctx.Recommendation.Spec.TargetRef.Name, savingsGrams)
+		ctx.Recommendation.Spec.TargetRef.Name, savingsGrams, dataSource)
 
 	return nil
 }
 
+// Policy is a no-op — manifest generation is done in Recommend.
 func (r *CarbonLoadShiftingRecommender) Policy(ctx *framework.RecommendationContext) error {
 	return nil
 }
 
-func (r *CarbonLoadShiftingRecommender) isHighCarbonHour(hour int) bool {
-	return !r.isLowCarbonHour(hour)
-}
-
-func (r *CarbonLoadShiftingRecommender) isLowCarbonHour(hour int) bool {
-	start := int(r.lowCarbonStartHour)
-	end := int(r.lowCarbonEndHour)
-
+// isInWindow checks if hour falls within [start, end) (handles wraparound).
+func isInWindow(hour, start, end int) bool {
 	if start <= end {
 		return hour >= start && hour < end
 	}
 	return hour >= start || hour < end
 }
 
+// formatHours formats a slice of hours as a human-readable range string.
 func formatHours(hours []int) string {
 	if len(hours) == 0 {
 		return "none"
@@ -158,6 +196,7 @@ func formatHours(hours []int) string {
 	return strings.Join(parts, ", ")
 }
 
+// buildEnergyProfileMap converts hourly profile samples to a map for the manifest.
 func buildEnergyProfileMap(profile []common.Sample) map[string]float64 {
 	result := make(map[string]float64, 24)
 	for _, s := range profile {
@@ -167,22 +206,28 @@ func buildEnergyProfileMap(profile []common.Sample) map[string]float64 {
 	return result
 }
 
+// ShiftManifest represents the recommended temporal shift.
 type ShiftManifest struct {
 	Recommendation     string             `json:"recommendation"`
 	TargetWindow       string             `json:"targetWindow"`
 	CurrentPeakHours   string             `json:"currentPeakHours"`
 	HighCarbonFraction float64            `json:"highCarbonFraction"`
+	DataSource         string             `json:"dataSource"`
 	EstimatedSavings   CarbonSavings      `json:"estimatedSavings"`
 	EnergyProfile      map[string]float64 `json:"energyProfile"`
 }
 
+// CarbonSavings holds the estimated carbon reduction from shifting.
 type CarbonSavings struct {
-	GramsCO2PerDay   float64 `json:"gramsCO2PerDay"`
-	CurrentGCO2      float64 `json:"currentGCO2PerDay"`
-	ShiftedGCO2      float64 `json:"shiftedGCO2PerDay"`
-	ReductionPercent float64 `json:"reductionPercent"`
+	GramsCO2PerDay      float64 `json:"gramsCO2PerDay"`
+	CurrentGCO2         float64 `json:"currentGCO2PerDay"`
+	ShiftedGCO2         float64 `json:"shiftedGCO2PerDay"`
+	ReductionPercent    float64 `json:"reductionPercent"`
+	HighCarbonIntensity float64 `json:"highCarbonIntensity_gCO2_kWh"`
+	LowCarbonIntensity  float64 `json:"lowCarbonIntensity_gCO2_kWh"`
 }
 
+// CurrentScheduleInfo describes the workload's current scheduling state.
 type CurrentScheduleInfo struct {
 	Kind     string `json:"kind"`
 	Schedule string `json:"schedule"`

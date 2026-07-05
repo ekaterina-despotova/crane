@@ -111,7 +111,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v9
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v11
           imagePullPolicy: Always
           env:
             - name: TZ
@@ -120,18 +120,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: ELECTRICITY_MAPS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: electricity-maps-secret
+                  key: api-key
+                  optional: true
+            - name: ELECTRICITY_MAPS_ZONE
+              value: "SE"
           command:
             - /craned
-            ## Point at our kube-prometheus-stack Prometheus
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
-            ## Enable Analysis (recommendations) + TimeSeriesPrediction
             - --feature-gates=Analysis=true,TimeSeriesPrediction=true,Autoscaling=false
             - --recommendation-configuration-file=/tmp/recommendation-config/config.yaml
-            ## Disable webhooks — no TLS certs needed
             - --webhook-enabled=false
-            ## Leader election off for single-replica dev deploy
             - --leader-elect=false
-            ## Health probe on :8081, metrics on :8080 (defaults)
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
             - -v=4
