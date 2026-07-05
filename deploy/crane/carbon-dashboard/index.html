@@ -70,12 +70,12 @@
 <body>
     <div class="layout">
         <div class="sidebar">
-            <h1>🌱 <span>Crane</span> Carbon</h1>
+            <h1><span>Crane</span> Carbon</h1>
             <div class="nav-item active" onclick="showPage('emissions')">
-                <span class="nav-icon">⚡</span> Carbon Emission Analysis
+                <span class="nav-icon"></span> Carbon Emission Analysis
             </div>
             <div class="nav-item" onclick="showPage('recommendations')">
-                <span class="nav-icon">🎯</span> Carbon Reduction
+                <span class="nav-icon"></span> Carbon Reduction
             </div>
         </div>
         <div class="main">
@@ -351,7 +351,7 @@
         try {
             await navigator.clipboard.writeText(command);
             document.getElementById('modal-status').innerHTML = `
-                <div class="status-msg status-success">✓ Command copied to clipboard! Paste in your terminal:</div>
+                <div class="status-msg status-success">Command copied to clipboard. Paste in your terminal:</div>
                 <pre style="background:#1a2332;color:#4ecdc4;padding:12px;border-radius:6px;font-size:11px;margin-top:8px;overflow-x:auto;">${command}</pre>`;
         } catch(e) {
             document.getElementById('modal-status').innerHTML = `
