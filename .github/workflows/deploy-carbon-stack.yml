@@ -119,7 +119,12 @@ jobs:
 
 
       - name: Deploy craned with carbon recommenders
-        run: kubectl apply -f deploy/crane/craned-deploy.yaml
+        run: |
+          kubectl create secret generic electricity-maps-secret \
+            -n crane-system \
+            --from-literal=api-key=${{ secrets.ELM_API_KEY }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f deploy/crane/craned-deploy.yaml
 
       - name: Wait for craned to be ready
         run: |
