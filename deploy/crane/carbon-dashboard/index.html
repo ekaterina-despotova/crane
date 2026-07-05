@@ -163,7 +163,7 @@
             <div id="modal-status"></div>
             <div class="modal-buttons">
                 <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-                <button class="btn-confirm" id="btn-do-apply" onclick="doApply()">Copy & Apply</button>
+                <button class="btn-confirm" id="btn-do-apply" onclick="doApply()">Apply</button>
             </div>
         </div>
     </div>
@@ -173,6 +173,7 @@
     const PROM_URL = '/prometheus';
     let allRecommendations = [];
     let currentApplyRec = null;
+    let appliedSet = new Set(JSON.parse(localStorage.getItem('appliedRecs') || '[]'));
 
     function showPage(page) {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -282,15 +283,18 @@
             const action = r.status?.action || '-';
             const desc = r.status?.description || r.metadata?.annotations?.['analysis.crane.io/message'] || 'Pending...';
             const badgeClass = action === 'Delete' ? 'badge-delete' : action === 'Patch' ? 'badge-patch' : 'badge-none';
-            const hasAction = action === 'Delete' || action === 'Patch';
+            const hasAction = (action === 'Delete' || action === 'Patch') && r.status?.recommendedInfo;
 
-            rows += `<tr>
+            const isPodWithNoAction = r.spec.targetRef?.kind === 'Pod' && !r.status?.recommendedInfo;
+            const isApplied = appliedSet.has(r.metadata.name);
+
+            rows += `<tr style="${isApplied ? 'opacity:0.6;background:#f0fff0;' : ''}">
                 <td><strong>${target}</strong><br><small style="color:#888">${r.spec.targetRef?.kind}</small></td>
                 <td>${ns}</td>
                 <td>${type}</td>
                 <td><span class="badge ${badgeClass}">${action}</span></td>
                 <td><div class="desc-text">${desc}</div></td>
-                <td>${hasAction && type !== 'LoadShifting' ? `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>` : hasAction && type === 'LoadShifting' ? `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>` : ''}</td>
+                <td>${isApplied ? '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>' : hasAction && type !== 'LoadShifting' ? `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>` : hasAction && type === 'LoadShifting' ? `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>` : isPodWithNoAction ? `<button class="btn-apply" style="background:#888;font-size:11px;" onclick='showPodInfo("${r.spec.targetRef?.name}")'>Info</button>` : ''}</td>
             </tr>`;
         });
 
@@ -309,6 +313,10 @@
             document.getElementById('modal-patch').textContent = patch;
         }
         document.getElementById('modal-status').innerHTML = '';
+        document.getElementById('btn-do-apply').textContent = 'Apply';
+        document.getElementById('btn-do-apply').disabled = false;
+        document.getElementById('btn-do-apply').style.display = '';
+        document.getElementById('btn-do-apply').onclick = doApply;
         document.getElementById('apply-modal').classList.add('show');
     }
 
@@ -321,21 +329,24 @@
         if (!currentApplyRec) return;
         const btn = document.getElementById('btn-do-apply');
         btn.disabled = true;
+        btn.textContent = 'Applying...';
 
         const target = currentApplyRec.spec.targetRef;
-        const patch = currentApplyRec.status?.recommendedInfo;
-        const kind = target.kind.toLowerCase();
-        const action = currentApplyRec.status?.action;
         const type = currentApplyRec.spec.type;
+        const action = currentApplyRec.status?.action;
+        const recName = currentApplyRec.metadata.name;
+        const recNs = currentApplyRec.metadata.namespace;
 
         if (type === 'CarbonLoadShifting') {
+            const patch = currentApplyRec.status?.recommendedInfo;
             try {
                 const info = JSON.parse(patch);
                 document.getElementById('modal-status').innerHTML = `
                     <div class="status-msg status-success">
                         <strong>Recommendation:</strong> Shift workload to <strong>${info.targetWindow}</strong><br>
                         <strong>Current peak hours:</strong> ${info.currentPeakHours}<br>
-                        <strong>Estimated savings:</strong> ${info.estimatedSavings.gramsCO2PerDay.toFixed(1)} gCO₂/day (${info.estimatedSavings.reductionPercent.toFixed(0)}% reduction)<br><br>
+                        <strong>Estimated savings:</strong> ${info.estimatedSavings.gramsCO2PerDay.toFixed(1)} gCO2/day (${info.estimatedSavings.reductionPercent.toFixed(0)}% reduction)<br>
+                        <strong>Data source:</strong> ${info.dataSource || 'static configuration'}<br><br>
                         <em>To implement: adjust your CronJob schedule or deployment scaling policy to avoid high-carbon hours.</em>
                     </div>`;
             } catch(e) {
@@ -346,21 +357,71 @@
             return;
         }
 
-        let command = `kubectl patch ${kind} ${target.name} -n ${target.namespace} --type='strategic' -p '${patch}'`;
-
         try {
-            await navigator.clipboard.writeText(command);
-            document.getElementById('modal-status').innerHTML = `
-                <div class="status-msg status-success">Command copied to clipboard. Paste in your terminal:</div>
-                <pre style="background:#1a2332;color:#4ecdc4;padding:12px;border-radius:6px;font-size:11px;margin-top:8px;overflow-x:auto;">${command}</pre>`;
+            const resp = await fetch(`${CRANED_URL}/recommendation/adopt/${recNs}/${recName}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await resp.json();
+
+            if (!data.error) {
+                const actionWord = action === 'Delete' ? 'Deletion' : 'Change';
+                document.getElementById('modal-status').innerHTML = `
+                    <div class="status-msg status-success">${actionWord} of <strong>${target.kind}/${target.name}</strong> in namespace <strong>${target.namespace}</strong> successfully applied.</div>`;
+                btn.textContent = 'Done';
+                btn.onclick = closeModal;
+                appliedSet.add(recName);
+                localStorage.setItem('appliedRecs', JSON.stringify([...appliedSet]));
+                filterRecommendations();
+            } else {
+                document.getElementById('modal-status').innerHTML = `
+                    <div class="status-msg status-error">Failed: ${data.error}</div>`;
+                btn.textContent = 'Retry';
+            }
         } catch(e) {
             document.getElementById('modal-status').innerHTML = `
-                <div class="status-msg status-success">Run this command in your terminal:</div>
-                <pre style="background:#1a2332;color:#4ecdc4;padding:12px;border-radius:6px;font-size:11px;margin-top:8px;overflow-x:auto;">${command}</pre>`;
+                <div class="status-msg status-error">Error: ${e.message}</div>`;
+            btn.textContent = 'Retry';
         }
 
         btn.disabled = false;
-        btn.textContent = 'Copy Command';
+    }
+
+    function showPodInfo(podName) {
+        const parts = podName.split('-');
+        let workloadName = podName;
+        if (parts.length >= 3) {
+            workloadName = parts.slice(0, -2).join('-');
+        }
+
+        const ownerRec = allRecommendations.find(r =>
+            r.spec.targetRef?.name === workloadName &&
+            r.spec.targetRef?.kind !== 'Pod' &&
+            r.status?.action === 'Delete' &&
+            r.status?.recommendedInfo
+        );
+
+        let msg = '';
+        if (ownerRec) {
+            msg = `<div class="status-msg status-success">
+                This pod is owned by <strong>${ownerRec.spec.targetRef.kind}/${ownerRec.spec.targetRef.name}</strong>.<br><br>
+                To shut it down, apply the recommendation for the owning ${ownerRec.spec.targetRef.kind} (scale to 0 replicas).<br><br>
+                <button class="btn-apply" onclick='closeModal(); openApplyModal(${JSON.stringify(JSON.stringify(ownerRec))})'>
+                    Go to ${ownerRec.spec.targetRef.kind} recommendation
+                </button>
+            </div>`;
+        } else {
+            msg = `<div class="status-msg" style="background:#f5f7fa;">
+                This pod is managed by a controller (Deployment/StatefulSet/DaemonSet).<br><br>
+                To remove it, find and apply the idle recommendation for its owning workload <strong>${workloadName}</strong> in the list above.
+            </div>`;
+        }
+
+        document.getElementById('modal-target').textContent = `Pod: ${podName}`;
+        document.getElementById('modal-patch').textContent = 'Pod is controller-owned — cannot be deleted directly.';
+        document.getElementById('modal-status').innerHTML = msg;
+        document.getElementById('btn-do-apply').style.display = 'none';
+        document.getElementById('apply-modal').classList.add('show');
     }
 
     loadEmissions();
