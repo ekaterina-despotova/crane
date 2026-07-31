@@ -14,9 +14,8 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
-const callerFormat = "CarbonLoadShiftingRecommender-%s-%s"
+const callerFormat = "CarbonTemporalShiftingRecommender-%s-%s"
 
-// Input value keys for RecommendationContext.
 const (
 	keyPodCPUJoules  = "kepler-pod-cpu-joules"
 	keyPodCPUWatts   = "kepler-pod-cpu-watts"
@@ -25,26 +24,21 @@ const (
 	keyHourlyProfile = "hourly-energy-profile"
 )
 
-// Kepler metric availability check.
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
-// Kepler PromQL expression templates for pod-level metrics.
 const (
 	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
 	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
-// Kepler PromQL expression for node-level watts (used for node targets).
 const keplerNodeCPUWattsExpr = `sum by (instance) (rate(kepler_node_package_joules_total{instance="%s",mode="dynamic"}[5m]))`
 
-// CheckDataProviders verifies that Kepler metrics are available in Prometheus.
-func (r *CarbonLoadShiftingRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
+func (r *CarbonTemporalShiftingRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
 	if err := r.BaseRecommender.CheckDataProviders(ctx); err != nil {
 		return err
 	}
 
-	// Verify Kepler metrics exist by querying kepler_container_cpu_joules_total.
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
 		keplerAvailabilityExpr,
@@ -70,8 +64,7 @@ func (r *CarbonLoadShiftingRecommender) CheckDataProviders(ctx *framework.Recomm
 	return nil
 }
 
-// CollectData queries Kepler energy metrics from Prometheus and stores them in the context.
-func (r *CarbonLoadShiftingRecommender) CollectData(ctx *framework.RecommendationContext) error {
+func (r *CarbonTemporalShiftingRecommender) CollectData(ctx *framework.RecommendationContext) error {
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	now := time.Now()
 	start := now.Add(-time.Hour * 24 * time.Duration(r.observationDays))
@@ -79,12 +72,9 @@ func (r *CarbonLoadShiftingRecommender) CollectData(ctx *framework.Recommendatio
 	ns := ctx.Recommendation.Spec.TargetRef.Namespace
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
 
-	// Build pod name regex from retrieved pods.
 	podNameRegex := buildPodNameRegex(ctx)
 
-	// For Jobs/CronJobs, pods may have completed. Use workload name as fallback.
 	if podNameRegex == "" && (kind == "CronJob" || kind == "Job") {
-		// Match pods whose name starts with the job/cronjob name.
 		podNameRegex = ctx.Recommendation.Spec.TargetRef.Name + ".*"
 	}
 
@@ -92,13 +82,11 @@ func (r *CarbonLoadShiftingRecommender) CollectData(ctx *framework.Recommendatio
 		return fmt.Errorf("no pods found matching selector for %s/%s", ns, ctx.Recommendation.Spec.TargetRef.Name)
 	}
 
-	// Collect pod-level energy metrics.
 	r.collectPodMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 
 	return nil
 }
 
-// buildPodNameRegex constructs a regex matching all pod names from the context.
 func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	if len(ctx.Pods) == 0 {
 		return ""
@@ -113,8 +101,7 @@ func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	return result
 }
 
-// collectPodMetrics queries pod-level Kepler energy metrics.
-func (r *CarbonLoadShiftingRecommender) collectPodMetrics(
+func (r *CarbonTemporalShiftingRecommender) collectPodMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, podNameRegex string,
 	start, end time.Time, step time.Duration,
@@ -133,8 +120,7 @@ func (r *CarbonLoadShiftingRecommender) collectPodMetrics(
 	}
 }
 
-// queryAndStore queries a single Kepler metric and stores the result in the context.
-func (r *CarbonLoadShiftingRecommender) queryAndStore(
+func (r *CarbonTemporalShiftingRecommender) queryAndStore(
 	ctx *framework.RecommendationContext,
 	caller, key, expr string,
 	start, end time.Time, step time.Duration,
@@ -164,18 +150,14 @@ func (r *CarbonLoadShiftingRecommender) queryAndStore(
 	ctx.AddInputValue(key, tsList)
 }
 
-// PostProcessing computes the hourly energy profile from collected time series.
-// It buckets energy consumption by hour-of-day to identify when the workload runs.
-func (r *CarbonLoadShiftingRecommender) PostProcessing(ctx *framework.RecommendationContext) error {
+func (r *CarbonTemporalShiftingRecommender) PostProcessing(ctx *framework.RecommendationContext) error {
 	podWattsList := ctx.InputValue(keyPodCPUWatts)
 	if len(podWattsList) == 0 {
 		return fmt.Errorf("no energy data available for hourly profile computation")
 	}
 
-	// Compute hourly energy profile: average watts per hour-of-day (0-23).
 	hourlyProfile := r.computeHourlyProfile(podWattsList)
 
-	// Store as synthetic time series (hour as timestamp, avg watts as value).
 	var samples []common.Sample
 	for hour := 0; hour < 24; hour++ {
 		samples = append(samples, common.Sample{
@@ -196,15 +178,12 @@ func (r *CarbonLoadShiftingRecommender) PostProcessing(ctx *framework.Recommenda
 	return nil
 }
 
-// computeHourlyProfile buckets time series samples by hour-of-day and returns
-// the average watts for each hour (0-23).
-func (r *CarbonLoadShiftingRecommender) computeHourlyProfile(tsList []*common.TimeSeries) [24]float64 {
+func (r *CarbonTemporalShiftingRecommender) computeHourlyProfile(tsList []*common.TimeSeries) [24]float64 {
 	var hourSums [24]float64
 	var hourCounts [24]int
 
 	for _, ts := range tsList {
 		for _, s := range ts.Samples {
-			// Timestamp is Unix seconds. Extract hour-of-day.
 			t := time.Unix(s.Timestamp, 0).UTC()
 			hour := t.Hour()
 			hourSums[hour] += s.Value
@@ -219,4 +198,85 @@ func (r *CarbonLoadShiftingRecommender) computeHourlyProfile(tsList []*common.Ti
 		}
 	}
 	return profile
+}
+
+
+// --- CarbonSpatialShifting uses the same data collection as temporal ---
+
+func (r *CarbonSpatialShiftingRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
+	if err := r.BaseRecommender.CheckDataProviders(ctx); err != nil {
+		return err
+	}
+
+	caller := fmt.Sprintf("CarbonSpatialShiftingRecommender-%s-%s", klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
+	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
+		keplerAvailabilityExpr,
+		corev1.ResourceCPU,
+		labels.Everything(),
+		caller,
+	)
+	if err := metricNamer.Validate(); err != nil {
+		return fmt.Errorf("Kepler availability metric validation failed: %v", err)
+	}
+
+	now := time.Now()
+	tsList, err := ctx.DataProviders[providers.PrometheusDataSource].QueryTimeSeries(
+		metricNamer, now.Add(-time.Hour), now, time.Minute,
+	)
+	if err != nil {
+		return fmt.Errorf("Prometheus connection failed: %v", err)
+	}
+	if len(tsList) == 0 {
+		return fmt.Errorf("Kepler metrics not available: kepler_container_package_joules_total not found.")
+	}
+
+	return nil
+}
+
+func (r *CarbonSpatialShiftingRecommender) CollectData(ctx *framework.RecommendationContext) error {
+	caller := fmt.Sprintf("CarbonSpatialShiftingRecommender-%s-%s", klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
+	now := time.Now()
+	start := now.Add(-time.Hour * 24 * time.Duration(r.observationDays))
+	step := time.Minute
+	ns := ctx.Recommendation.Spec.TargetRef.Namespace
+	kind := ctx.Recommendation.Spec.TargetRef.Kind
+
+	podNameRegex := buildPodNameRegex(ctx)
+	if podNameRegex == "" && (kind == "CronJob" || kind == "Job") {
+		podNameRegex = ctx.Recommendation.Spec.TargetRef.Name + ".*"
+	}
+	if podNameRegex == "" {
+		return fmt.Errorf("no pods found matching selector for %s/%s", ns, ctx.Recommendation.Spec.TargetRef.Name)
+	}
+
+	temporal := &CarbonTemporalShiftingRecommender{}
+	temporal.collectPodMetrics(ctx, caller, ns, podNameRegex, start, now, step)
+
+	return nil
+}
+
+func (r *CarbonSpatialShiftingRecommender) PostProcessing(ctx *framework.RecommendationContext) error {
+	podWattsList := ctx.InputValue(keyPodCPUWatts)
+	if len(podWattsList) == 0 {
+		return fmt.Errorf("no energy data available for spatial analysis")
+	}
+
+	temporal := &CarbonTemporalShiftingRecommender{}
+	hourlyProfile := temporal.computeHourlyProfile(podWattsList)
+
+	var samples []common.Sample
+	for hour := 0; hour < 24; hour++ {
+		samples = append(samples, common.Sample{
+			Value:     hourlyProfile[hour],
+			Timestamp: int64(hour),
+		})
+	}
+
+	ts := &common.TimeSeries{
+		Labels:  []common.Label{{Name: "metric", Value: "hourly_energy_profile"}},
+		Samples: samples,
+	}
+	ctx.AddInputValue(keyHourlyProfile, []*common.TimeSeries{ts})
+
+	return nil
 }

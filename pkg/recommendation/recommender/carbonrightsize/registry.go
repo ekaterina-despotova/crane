@@ -26,7 +26,6 @@ func (r *CarbonRightSizingRecommender) Name() string {
 	return recommender.CarbonRightSizingRecommender
 }
 
-// NewCarbonRightSizingRecommender creates a new CarbonRightSizing recommender.
 func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule analysisv1alph1.RecommendationRule) (recommender.Recommender, error) {
 	rec = config.MergeRecommenderConfigFromRule(rec, recommendationRule)
 

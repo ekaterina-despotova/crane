@@ -26,7 +26,6 @@ func (r *CarbonIdleResourceRecommender) Name() string {
 	return recommender.CarbonIdleResourceRecommender
 }
 
-// NewCarbonIdleResourceRecommender creates a new CarbonIdleResource recommender.
 func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule analysisv1alph1.RecommendationRule) (recommender.Recommender, error) {
 	rec = config.MergeRecommenderConfigFromRule(rec, recommendationRule)
 

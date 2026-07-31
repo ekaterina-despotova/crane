@@ -25,6 +25,9 @@ const (
 	// CarbonRightSizingRecommender name
 	CarbonRightSizingRecommender string = "CarbonRightSizing"
 
-	// CarbonLoadShiftingRecommender name
-	CarbonLoadShiftingRecommender string = "CarbonLoadShifting"
+	// CarbonTemporalShiftingRecommender name
+	CarbonTemporalShiftingRecommender string = "CarbonTemporalShifting"
+
+	// CarbonSpatialShiftingRecommender name
+	CarbonSpatialShiftingRecommender string = "CarbonSpatialShifting"
 )

@@ -137,8 +137,11 @@ jobs:
       - name: Apply CarbonRightSizing rule
         run: kubectl apply -f examples/analytics/carbon-rightsize-rule.yaml
 
-      - name: Apply CarbonLoadShifting rule
+      - name: Apply CarbonTemporalShifting rule
         run: kubectl apply -f examples/analytics/carbon-loadshift-rule.yaml
+
+      - name: Apply CarbonSpatialShifting rule
+        run: kubectl apply -f examples/analytics/carbon-spatial-rule.yaml
 
       - name: Deploy Crane Dashboard
         run: kubectl apply -f deploy/crane/dashboard-deploy.yaml

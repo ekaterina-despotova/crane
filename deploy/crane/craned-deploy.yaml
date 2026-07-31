@@ -70,7 +70,7 @@ data:
             apiVersion: apps/v1
           - kind: DaemonSet
             apiVersion: apps/v1
-      - name: CarbonLoadShifting
+      - name: CarbonTemporalShifting
         config:
           low-carbon-start-hour: "0"
           low-carbon-end-hour: "6"
@@ -89,6 +89,19 @@ data:
             apiVersion: batch/v1
           - kind: Job
             apiVersion: batch/v1
+      - name: CarbonSpatialShifting
+        config:
+          current-zone: "SE"
+          comparison-zones: "NO,FI,DK,DE,PL,FR,GB"
+          observation-window-days: "7"
+          min-energy-watts: "0.01"
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
+            apiVersion: apps/v1
+          - kind: DaemonSet
+            apiVersion: apps/v1
 
 ---
 apiVersion: apps/v1

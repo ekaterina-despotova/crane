@@ -132,7 +132,8 @@
                                 <option value="all">All Types</option>
                                 <option value="CarbonIdleResource">Idle Resource</option>
                                 <option value="CarbonRightSizing">Right Sizing</option>
-                                <option value="CarbonLoadShifting">Load Shifting</option>
+                                <option value="CarbonTemporalShifting">Temporal Shifting</option>
+                                <option value="CarbonSpatialShifting">Spatial Shifting</option>
                             </select>
                             <select id="filter-action" onchange="filterRecommendations()">
                                 <option value="all">All Actions</option>
@@ -241,17 +242,20 @@
             allRecommendations = items.filter(r => 
                 r.spec.type === 'CarbonIdleResource' || 
                 r.spec.type === 'CarbonRightSizing' || 
-                r.spec.type === 'CarbonLoadShifting'
+                r.spec.type === 'CarbonTemporalShifting' ||
+                r.spec.type === 'CarbonSpatialShifting'
             );
 
             const idle = allRecommendations.filter(r => r.spec.type === 'CarbonIdleResource' && r.status?.action === 'Delete').length;
             const rightsize = allRecommendations.filter(r => r.spec.type === 'CarbonRightSizing' && r.status?.action === 'Patch').length;
-            const shift = allRecommendations.filter(r => r.spec.type === 'CarbonLoadShifting' && r.status?.action === 'Patch').length;
+            const temporal = allRecommendations.filter(r => r.spec.type === 'CarbonTemporalShifting' && r.status?.action === 'Patch').length;
+            const spatial = allRecommendations.filter(r => r.spec.type === 'CarbonSpatialShifting' && r.status?.action === 'Patch').length;
 
             document.getElementById('rec-summary-cards').innerHTML = `
                 <div class="card"><div class="card-label">Idle Resources (Delete)</div><div class="card-value red">${idle}</div></div>
                 <div class="card"><div class="card-label">Right-Sizing (Patch)</div><div class="card-value orange">${rightsize}</div></div>
-                <div class="card"><div class="card-label">Load Shifting (Shift)</div><div class="card-value green">${shift}</div></div>
+                <div class="card"><div class="card-label">Temporal Shifting</div><div class="card-value green">${temporal}</div></div>
+                <div class="card"><div class="card-label">Spatial Shifting</div><div class="card-value green">${spatial}</div></div>
                 <div class="card"><div class="card-label">Total Analyzed</div><div class="card-value">${allRecommendations.length}</div></div>
             `;
 
@@ -294,7 +298,7 @@
                 <td>${type}</td>
                 <td><span class="badge ${badgeClass}">${action}</span></td>
                 <td><div class="desc-text">${desc}</div></td>
-                <td>${isApplied ? '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>' : hasAction && type !== 'LoadShifting' ? `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>` : hasAction && type === 'LoadShifting' ? `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>` : isPodWithNoAction ? `<button class="btn-apply" style="background:#888;font-size:11px;" onclick='showPodInfo("${r.spec.targetRef?.name}")'>Info</button>` : ''}</td>
+                <td>${isApplied ? '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>' : hasAction && type !== 'TemporalShifting' && type !== 'SpatialShifting' ? `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>` : hasAction && (type === 'TemporalShifting' || type === 'SpatialShifting') ? `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>` : isPodWithNoAction ? `<button class="btn-apply" style="background:#888;font-size:11px;" onclick='showPodInfo("${r.spec.targetRef?.name}")'>Info</button>` : ''}</td>
             </tr>`;
         });
 
@@ -337,7 +341,7 @@
         const recName = currentApplyRec.metadata.name;
         const recNs = currentApplyRec.metadata.namespace;
 
-        if (type === 'CarbonLoadShifting') {
+        if (type === 'CarbonTemporalShifting' || type === 'CarbonSpatialShifting') {
             const patch = currentApplyRec.status?.recommendedInfo;
             try {
                 const info = JSON.parse(patch);

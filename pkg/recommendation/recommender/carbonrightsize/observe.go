@@ -9,8 +9,6 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
-// Observe records the total energy reduction estimate and number of right-sized containers
-// in the Recommendation status.
 func (r *CarbonRightSizingRecommender) Observe(ctx *framework.RecommendationContext) error {
 	if ctx.Recommendation.Status.Action != "Patch" {
 		return nil
@@ -34,7 +32,6 @@ func (r *CarbonRightSizingRecommender) Observe(ctx *framework.RecommendationCont
 	return nil
 }
 
-// countRightSizedContainers returns the number of containers in the recommended patch.
 func (r *CarbonRightSizingRecommender) countRightSizedContainers(ctx *framework.RecommendationContext) int {
 	if ctx.Recommendation.Status.RecommendedInfo == "" {
 		return 0
@@ -49,9 +46,6 @@ func (r *CarbonRightSizingRecommender) countRightSizedContainers(ctx *framework.
 	return len(patch.Spec.Template.Spec.Containers)
 }
 
-// estimateEnergyReduction estimates the total energy reduction in watts by comparing
-// current pod energy consumption against the efficiency target. Pods below the target
-// are expected to save energy proportional to the gap between current and target efficiency.
 func (r *CarbonRightSizingRecommender) estimateEnergyReduction(ctx *framework.RecommendationContext) float64 {
 	podWattsList := ctx.InputValue(keyPodCPUWatts)
 	efficiencyList := ctx.InputValue(keyEnergyEfficiency)
@@ -68,14 +62,12 @@ func (r *CarbonRightSizingRecommender) estimateEnergyReduction(ctx *framework.Re
 
 		avgPower := avgSamples(ts.Samples)
 
-		// Get the efficiency ratio for this pod (or use the first available).
 		var effRatio float64
 		if i < len(efficiencyList) && len(efficiencyList[i].Samples) > 0 {
 			effRatio = efficiencyList[i].Samples[0].Value
 		}
 
 		if effRatio < r.energyEfficiencyTarget && effRatio > 0 {
-			// Estimated savings: the wasted energy fraction that right-sizing would reclaim.
 			wastedFraction := 1.0 - (effRatio / r.energyEfficiencyTarget)
 			totalReduction += avgPower * wastedFraction
 		}

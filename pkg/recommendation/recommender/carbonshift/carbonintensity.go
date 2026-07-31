@@ -12,13 +12,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// ElectricityMaps API base URL and default zone.
 const (
 	electricityMapsBaseURL = "https://api.electricitymaps.com/v3"
-	defaultZone            = "SE" // Sweden
+	defaultZone            = "SE"
 )
 
-// CarbonIntensityEntry represents a single data point from the Electricity Maps API.
 type CarbonIntensityEntry struct {
 	Zone            string  `json:"zone"`
 	CarbonIntensity float64 `json:"carbonIntensity"`
@@ -26,41 +24,34 @@ type CarbonIntensityEntry struct {
 	UpdatedAt       string  `json:"updatedAt"`
 }
 
-// CarbonIntensityHistory represents the API response for carbon intensity history.
 type CarbonIntensityHistory struct {
 	Zone    string                 `json:"zone"`
 	History []CarbonIntensityEntry `json:"history"`
 }
 
-// HourlyCarbonIntensity holds the average carbon intensity per hour (0-23).
 type HourlyCarbonIntensity struct {
 	Zone       string
-	HourlyGCO2 [24]float64 // gCO2/kWh per hour of day (UTC)
+	HourlyGCO2 [24]float64
 	FetchedAt  time.Time
 }
 
-// carbonIntensityCache caches the result to avoid repeated API calls within the same cycle.
 var (
 	ciCache     *HourlyCarbonIntensity
 	ciCacheMu   sync.Mutex
 	ciCacheTTL  = 30 * time.Minute
 )
 
-// GetHourlyCarbonIntensity fetches the 24h carbon intensity history from Electricity Maps
-// and returns the average gCO2/kWh per hour of day. Results are cached for ciCacheTTL.
-// If the API key is not set or the API fails, returns nil (caller should fall back to config).
 func GetHourlyCarbonIntensity() *HourlyCarbonIntensity {
 	ciCacheMu.Lock()
 	defer ciCacheMu.Unlock()
 
-	// Return cache if fresh.
 	if ciCache != nil && time.Since(ciCache.FetchedAt) < ciCacheTTL {
 		return ciCache
 	}
 
 	apiKey := os.Getenv("ELECTRICITY_MAPS_API_KEY")
 	if apiKey == "" {
-		klog.V(2).Infof("CarbonLoadShifting: ELECTRICITY_MAPS_API_KEY not set, using static config")
+		klog.V(2).Infof("CarbonTemporalShifting: ELECTRICITY_MAPS_API_KEY not set, using static config")
 		return nil
 	}
 
@@ -74,36 +65,35 @@ func GetHourlyCarbonIntensity() *HourlyCarbonIntensity {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		klog.Warningf("CarbonLoadShifting: failed to create request: %v", err)
+		klog.Warningf("CarbonTemporalShifting: failed to create request: %v", err)
 		return nil
 	}
 	req.Header.Set("auth-token", apiKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		klog.Warningf("CarbonLoadShifting: Electricity Maps API call failed: %v", err)
+		klog.Warningf("CarbonTemporalShifting: Electricity Maps API call failed: %v", err)
 		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		klog.Warningf("CarbonLoadShifting: Electricity Maps API returned %d: %s", resp.StatusCode, string(body))
+		klog.Warningf("CarbonTemporalShifting: Electricity Maps API returned %d: %s", resp.StatusCode, string(body))
 		return nil
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		klog.Warningf("CarbonLoadShifting: failed to read response body: %v", err)
+		klog.Warningf("CarbonTemporalShifting: failed to read response body: %v", err)
 		return nil
 	}
 
 	var history CarbonIntensityHistory
 	if err := json.Unmarshal(body, &history); err != nil {
-		// Try parsing as array directly (some API versions return array of entries).
 		var entries []CarbonIntensityEntry
 		if err2 := json.Unmarshal(body, &entries); err2 != nil {
-			klog.Warningf("CarbonLoadShifting: failed to parse API response: %v (also tried array: %v)", err, err2)
+			klog.Warningf("CarbonTemporalShifting: failed to parse API response: %v (also tried array: %v)", err, err2)
 			return nil
 		}
 		history.Zone = zone
@@ -111,11 +101,10 @@ func GetHourlyCarbonIntensity() *HourlyCarbonIntensity {
 	}
 
 	if len(history.History) == 0 {
-		klog.Warningf("CarbonLoadShifting: Electricity Maps returned empty history for zone %s", zone)
+		klog.Warningf("CarbonTemporalShifting: Electricity Maps returned empty history for zone %s", zone)
 		return nil
 	}
 
-	// Bucket by hour of day (UTC).
 	var hourSums [24]float64
 	var hourCounts [24]int
 
@@ -139,13 +128,11 @@ func GetHourlyCarbonIntensity() *HourlyCarbonIntensity {
 		}
 	}
 
-	klog.Infof("CarbonLoadShifting: fetched real carbon intensity for zone %s (%d data points)", zone, len(history.History))
+	klog.Infof("CarbonTemporalShifting: fetched real carbon intensity for zone %s (%d data points)", zone, len(history.History))
 	ciCache = result
 	return result
 }
 
-// FindOptimalWindow finds the lowest-carbon window of the given duration (hours).
-// Returns startHour and the average gCO2/kWh during that window.
 func (ci *HourlyCarbonIntensity) FindOptimalWindow(windowHours int) (startHour int, avgIntensity float64) {
 	if windowHours <= 0 || windowHours > 24 {
 		windowHours = 6
@@ -170,8 +157,6 @@ func (ci *HourlyCarbonIntensity) FindOptimalWindow(windowHours int) (startHour i
 	return bestStart, bestAvg
 }
 
-// FindPeakWindow finds the highest-carbon window of the given duration (hours).
-// Returns startHour and the average gCO2/kWh during that window.
 func (ci *HourlyCarbonIntensity) FindPeakWindow(windowHours int) (startHour int, avgIntensity float64) {
 	if windowHours <= 0 || windowHours > 24 {
 		windowHours = 6
@@ -194,4 +179,56 @@ func (ci *HourlyCarbonIntensity) FindPeakWindow(windowHours int) (startHour int,
 	}
 
 	return worstStart, worstAvg
+}
+
+func GetMultiZoneCarbonIntensity(zones []string) map[string]float64 {
+	apiKey := os.Getenv("ELECTRICITY_MAPS_API_KEY")
+	if apiKey == "" {
+		klog.V(2).Infof("CarbonSpatialShifting: ELECTRICITY_MAPS_API_KEY not set")
+		return nil
+	}
+
+	result := make(map[string]float64)
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for _, zone := range zones {
+		url := fmt.Sprintf("%s/carbon-intensity/latest?zone=%s", electricityMapsBaseURL, zone)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			klog.Warningf("CarbonSpatialShifting: failed to create request for zone %s: %v", zone, err)
+			continue
+		}
+		req.Header.Set("auth-token", apiKey)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			klog.Warningf("CarbonSpatialShifting: API call failed for zone %s: %v", zone, err)
+			continue
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			klog.Warningf("CarbonSpatialShifting: API returned %d for zone %s", resp.StatusCode, zone)
+			continue
+		}
+
+		var entry CarbonIntensityEntry
+		if err := json.Unmarshal(body, &entry); err != nil {
+			klog.Warningf("CarbonSpatialShifting: failed to parse response for zone %s: %v", zone, err)
+			continue
+		}
+
+		if entry.CarbonIntensity > 0 {
+			result[zone] = entry.CarbonIntensity
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	klog.Infof("CarbonSpatialShifting: fetched carbon intensity for %d zones", len(result))
+	return result
 }
