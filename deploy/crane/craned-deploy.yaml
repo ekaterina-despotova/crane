@@ -140,7 +140,7 @@ spec:
                   key: api-key
                   optional: true
             - name: ELECTRICITY_MAPS_ZONE
-              value: "DE"
+              value: "SE"
           command:
             - /craned
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
