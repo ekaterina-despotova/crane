@@ -5,5 +5,5 @@ variable "subscription_id" {
 
 variable "region" {
     type = string
-    default = "swedencentral"
+    default = "germanywestcentral"
 }

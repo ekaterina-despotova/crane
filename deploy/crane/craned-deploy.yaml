@@ -91,8 +91,8 @@ data:
             apiVersion: batch/v1
       - name: CarbonSpatialShifting
         config:
-          current-zone: "SE"
-          comparison-zones: "NO,FI,DK,DE,PL,FR,GB"
+          current-zone: "DE"
+          comparison-zones: "SE,NO,FI,DK,PL,FR,GB"
           observation-window-days: "7"
           min-energy-watts: "0.01"
         acceptedResources:
@@ -124,7 +124,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v11
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v12
           imagePullPolicy: Always
           env:
             - name: TZ
@@ -140,7 +140,7 @@ spec:
                   key: api-key
                   optional: true
             - name: ELECTRICITY_MAPS_ZONE
-              value: "SE"
+              value: "DE"
           command:
             - /craned
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
