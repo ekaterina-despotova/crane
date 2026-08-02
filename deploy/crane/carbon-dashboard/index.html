@@ -155,28 +155,16 @@
         </div>
     </div>
 
-    <!-- Apply Modal (for Idle/RightSize) -->
+    <!-- Modal -->
     <div class="modal-overlay" id="apply-modal">
         <div class="modal">
-            <h3>Apply Recommendation</h3>
+            <h3 id="modal-title">Apply Recommendation</h3>
             <p id="modal-target" style="margin-bottom: 12px; color: #666;"></p>
             <pre id="modal-patch"></pre>
             <div id="modal-status"></div>
             <div class="modal-buttons">
-                <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+                <button class="btn-cancel" id="btn-cancel" onclick="closeModal()">Cancel</button>
                 <button class="btn-confirm" id="btn-do-apply" onclick="doApply()">Apply</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Shift Info Modal -->
-    <div class="modal-overlay" id="shift-modal">
-        <div class="modal" style="max-width:680px;">
-            <h3 id="shift-modal-title" style="margin-bottom:4px;"></h3>
-            <p id="shift-modal-target" style="margin-bottom:16px;color:#666;font-size:13px;"></p>
-            <div id="shift-modal-body"></div>
-            <div class="modal-buttons" style="margin-top:16px;">
-                <button class="btn-cancel" onclick="closeShiftModal()">Close</button>
             </div>
         </div>
     </div>
@@ -309,7 +297,7 @@
             if (isApplied) {
                 actionCell = '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>';
             } else if (isShiftType && hasAction) {
-                actionCell = `<button class="btn-apply" style="background:#5b9bd5;" onclick='openShiftModal(${JSON.stringify(JSON.stringify(r))})'>Info</button>`;
+                actionCell = `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>`;
             } else if (!isShiftType && hasAction) {
                 actionCell = `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>`;
             } else if (isPodWithNoAction) {
@@ -329,137 +317,14 @@
         document.getElementById('rec-table-body').innerHTML = rows || '<tr><td colspan="6">No matching recommendations</td></tr>';
     }
 
-    function openShiftModal(recJson) {
-        const rec = JSON.parse(recJson);
-        const type = rec.spec.type; // e.g. CarbonTemporalShifting or CarbonSpatialShifting
-        const target = `${rec.spec.targetRef?.kind}/${rec.spec.targetRef?.namespace}/${rec.spec.targetRef?.name}`;
-        const patch = rec.status?.recommendedInfo;
-
-        document.getElementById('shift-modal-target').textContent = `Target: ${target}`;
-
-        let bodyHtml = '';
-        try {
-            const info = JSON.parse(patch);
-            if (type === 'CarbonTemporalShifting') {
-                document.getElementById('shift-modal-title').textContent = 'Temporal Shifting Recommendation';
-                const s = info.estimatedSavings || {};
-                bodyHtml = `
-                    <div style="display:grid;gap:12px;">
-                        <div class="status-msg status-success" style="margin:0;">
-                            <strong>Recommended low-carbon window:</strong> ${info.targetWindow || '-'}<br>
-                            <strong>Current peak hours:</strong> ${info.currentPeakHours || '-'}<br>
-                            <strong>High-carbon fraction:</strong> ${((info.highCarbonFraction || 0)*100).toFixed(0)}% of daily energy<br>
-                            <strong>Data source:</strong> ${info.dataSource || '-'}
-                        </div>
-                        <div style="background:#f5f7fa;border-radius:8px;padding:14px;">
-                            <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Estimated Carbon Savings</div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                                <div><div style="font-size:11px;color:#888;">Current emissions</div><div style="font-weight:700;color:#e74c3c;">${(s.currentGCO2PerDay || 0).toFixed(1)} gCO₂/day</div></div>
-                                <div><div style="font-size:11px;color:#888;">After shift</div><div style="font-weight:700;color:#27ae60;">${(s.shiftedGCO2PerDay || 0).toFixed(1)} gCO₂/day</div></div>
-                                <div><div style="font-size:11px;color:#888;">Savings</div><div style="font-weight:700;color:#27ae60;">${(s.gramsCO2PerDay || 0).toFixed(1)} gCO₂/day</div></div>
-                                <div><div style="font-size:11px;color:#888;">Reduction</div><div style="font-weight:700;color:#27ae60;">${(s.reductionPercent || 0).toFixed(0)}%</div></div>
-                                <div><div style="font-size:11px;color:#888;">High-carbon intensity</div><div style="font-weight:600;">${(s.highCarbonIntensity_gCO2_kWh || 0).toFixed(1)} gCO₂/kWh</div></div>
-                                <div><div style="font-size:11px;color:#888;">Low-carbon intensity</div><div style="font-weight:600;">${(s.lowCarbonIntensity_gCO2_kWh || 0).toFixed(1)} gCO₂/kWh</div></div>
-                            </div>
-                        </div>
-                        ${info.energyProfile ? renderHourlyProfile(info.energyProfile, info.targetWindow) : ''}
-                        <div style="background:#fffbea;border:1px solid #f9d94e;border-radius:8px;padding:12px;font-size:13px;">
-                            <strong>How to implement:</strong> Adjust your CronJob schedule or deployment scaling policy to run workloads during the low-carbon window above.
-                        </div>
-                    </div>`;
-            } else if (type === 'CarbonSpatialShifting') {
-                document.getElementById('shift-modal-title').textContent = 'Spatial Shifting Recommendation';
-                const rankings = info.zoneRankings || [];
-                let rankingRows = rankings.map((z, i) => {
-                    const isCurrent = z.zone === info.currentZone;
-                    const isBest = z.zone === info.bestZone;
-                    return `<tr style="${isBest ? 'background:#e8f5e9;font-weight:600;' : isCurrent ? 'background:#fff8e1;' : ''}">
-                        <td style="padding:6px 10px;">${z.zone}${isCurrent ? ' <span style="color:#888;font-size:11px;">(current)</span>' : ''}${isBest ? ' <span style="color:#27ae60;font-size:11px;">✓ best</span>' : ''}</td>
-                        <td style="padding:6px 10px;">${(z.intensity_gCO2_kWh || 0).toFixed(1)} gCO₂/kWh</td>
-                        <td style="padding:6px 10px;">${z.savings_gCO2_day > 0 ? '+' : ''}${(z.savings_gCO2_day || 0).toFixed(1)} gCO₂/day</td>
-                    </tr>`;
-                }).join('');
-                bodyHtml = `
-                    <div style="display:grid;gap:12px;">
-                        <div class="status-msg status-success" style="margin:0;">
-                            <strong>Current zone:</strong> ${info.currentZone || '-'} — ${(info['currentIntensity_gCO2_kWh'] || 0).toFixed(1)} gCO₂/kWh<br>
-                            <strong>Recommended zone:</strong> ${info.bestZone || '-'} — ${(info['bestIntensity_gCO2_kWh'] || 0).toFixed(1)} gCO₂/kWh<br>
-                            <strong>Estimated savings:</strong> ${(info['estimatedSavings_gCO2_day'] || 0).toFixed(1)} gCO₂/day (${(info.reductionPercent || 0).toFixed(0)}% reduction)<br>
-                            <strong>Data source:</strong> ${info.dataSource || '-'}
-                        </div>
-                        <div style="background:#f5f7fa;border-radius:8px;padding:14px;">
-                            <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Zone Rankings (by carbon intensity)</div>
-                            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                                <thead><tr style="border-bottom:1px solid #ddd;">
-                                    <th style="text-align:left;padding:6px 10px;font-size:11px;color:#888;">Zone</th>
-                                    <th style="text-align:left;padding:6px 10px;font-size:11px;color:#888;">Intensity</th>
-                                    <th style="text-align:left;padding:6px 10px;font-size:11px;color:#888;">Savings vs current</th>
-                                </tr></thead>
-                                <tbody>${rankingRows}</tbody>
-                            </table>
-                        </div>
-                        <div style="background:#fffbea;border:1px solid #f9d94e;border-radius:8px;padding:12px;font-size:13px;">
-                            <strong>How to implement:</strong> Migrate this workload to a Kubernetes cluster or cloud region in the recommended zone to reduce its carbon footprint.
-                        </div>
-                    </div>`;
-            } else {
-                document.getElementById('shift-modal-title').textContent = 'Shifting Recommendation';
-                bodyHtml = `<pre style="background:#f5f7fa;padding:12px;border-radius:8px;font-size:12px;overflow-x:auto;">${JSON.stringify(info, null, 2)}</pre>`;
-            }
-        } catch(e) {
-            document.getElementById('shift-modal-title').textContent = 'Shifting Recommendation';
-            bodyHtml = `<div class="status-msg">${patch || 'No details available.'}</div>`;
-        }
-
-        document.getElementById('shift-modal-body').innerHTML = bodyHtml;
-        document.getElementById('shift-modal').classList.add('show');
-    }
-
-    function renderHourlyProfile(profile, targetWindow) {
-        if (!profile || typeof profile !== 'object') return '';
-        const hours = Object.keys(profile).sort();
-        if (hours.length === 0) return '';
-        const values = hours.map(h => profile[h] || 0);
-        const maxVal = Math.max(...values, 0.001);
-
-        let windowStart = -1, windowEnd = -1;
-        if (targetWindow) {
-            const parts = targetWindow.match(/(\d+):00-(\d+):00/);
-            if (parts) { windowStart = parseInt(parts[1]); windowEnd = parseInt(parts[2]); }
-        }
-
-        const bars = hours.map((h, i) => {
-            const hour = parseInt(h);
-            const heightPct = Math.max((values[i] / maxVal) * 100, 2);
-            const inWindow = windowStart >= 0 && isHourInWindow(hour, windowStart, windowEnd);
-            const color = inWindow ? '#27ae60' : '#e74c3c';
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
-                <div style="width:100%;height:${heightPct.toFixed(0)}px;background:${color};border-radius:2px 2px 0 0;min-height:2px;" title="${h}: ${values[i].toFixed(3)}W"></div>
-                <div style="font-size:8px;color:#888;">${hour % 4 === 0 ? h.replace(':00','h') : ''}</div>
-            </div>`;
-        }).join('');
-
-        return `
-            <div style="background:#f5f7fa;border-radius:8px;padding:14px;">
-                <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">24h Energy Profile <span style="font-weight:400;text-transform:none;letter-spacing:0;"><span style="color:#27ae60;">■</span> low-carbon window <span style="color:#e74c3c;margin-left:8px;">■</span> high-carbon hours</span></div>
-                <div style="display:flex;align-items:flex-end;height:80px;gap:1px;">${bars}</div>
-            </div>`;
-    }
-
-    function isHourInWindow(hour, start, end) {
-        if (start <= end) return hour >= start && hour < end;
-        return hour >= start || hour < end;
-    }
-
-    function closeShiftModal() {
-        document.getElementById('shift-modal').classList.remove('show');
-    }
-
     function openApplyModal(recJson) {
         currentApplyRec = JSON.parse(recJson);
+        const type = currentApplyRec.spec.type;
         const target = `${currentApplyRec.spec.targetRef?.kind}/${currentApplyRec.spec.targetRef?.namespace}/${currentApplyRec.spec.targetRef?.name}`;
         const patch = currentApplyRec.status?.recommendedInfo || 'No patch available';
+        const isShift = (type === 'CarbonTemporalShifting' || type === 'CarbonSpatialShifting');
 
+        document.getElementById('modal-title').textContent = isShift ? 'Shifting Recommendation' : 'Apply Recommendation';
         document.getElementById('modal-target').textContent = `Target: ${target}`;
         try {
             document.getElementById('modal-patch').textContent = JSON.stringify(JSON.parse(patch), null, 2);
@@ -467,15 +332,19 @@
             document.getElementById('modal-patch').textContent = patch;
         }
         document.getElementById('modal-status').innerHTML = '';
+
+        document.getElementById('btn-do-apply').style.display = isShift ? 'none' : '';
+        document.getElementById('btn-cancel').textContent = isShift ? 'Close' : 'Cancel';
         document.getElementById('btn-do-apply').textContent = 'Apply';
         document.getElementById('btn-do-apply').disabled = false;
-        document.getElementById('btn-do-apply').style.display = '';
         document.getElementById('btn-do-apply').onclick = doApply;
         document.getElementById('apply-modal').classList.add('show');
     }
 
     function closeModal() {
         document.getElementById('apply-modal').classList.remove('show');
+        document.getElementById('btn-cancel').textContent = 'Cancel';
+        document.getElementById('btn-do-apply').style.display = '';
         currentApplyRec = null;
     }
 
@@ -550,6 +419,7 @@
             </div>`;
         }
 
+        document.getElementById('modal-title').textContent = 'Pod Info';
         document.getElementById('modal-target').textContent = `Pod: ${podName}`;
         document.getElementById('modal-patch').textContent = 'Pod is controller-owned — cannot be deleted directly.';
         document.getElementById('modal-status').innerHTML = msg;

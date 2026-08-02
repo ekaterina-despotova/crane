@@ -91,8 +91,8 @@ data:
             apiVersion: batch/v1
       - name: CarbonSpatialShifting
         config:
-          current-zone: "DE"
-          comparison-zones: "SE,NO,FI,DK,PL,FR,GB"
+          current-zone: "SE"
+          comparison-zones: "NO,FI,DK,DE,PL,FR,GB"
           observation-window-days: "7"
           min-energy-watts: "0.01"
         acceptedResources:
