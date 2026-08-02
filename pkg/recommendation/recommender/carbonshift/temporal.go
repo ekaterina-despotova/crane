@@ -21,7 +21,7 @@ func (r *CarbonTemporalShiftingRecommender) Recommend(ctx *framework.Recommendat
 		return fmt.Errorf("no hourly energy profile available for load shifting analysis")
 	}
 
-	profile := profileList[0].Samples // 24 samples, one per hour
+	profile := profileList[0].Samples
 
 	var totalEnergy float64
 	for _, s := range profile {

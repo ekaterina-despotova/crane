@@ -71,15 +71,14 @@ func (r *CarbonTemporalShiftingRecommender) CollectData(ctx *framework.Recommend
 	step := time.Minute
 	ns := ctx.Recommendation.Spec.TargetRef.Namespace
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
+	name := ctx.Recommendation.Spec.TargetRef.Name
 
 	podNameRegex := buildPodNameRegex(ctx)
 
-	if podNameRegex == "" && (kind == "CronJob" || kind == "Job") {
-		podNameRegex = ctx.Recommendation.Spec.TargetRef.Name + ".*"
-	}
-
 	if podNameRegex == "" {
-		return fmt.Errorf("no pods found matching selector for %s/%s", ns, ctx.Recommendation.Spec.TargetRef.Name)
+		podNameRegex = name + ".*"
+		klog.V(4).Infof("%s: no pods found for %s/%s (%s), falling back to prefix regex %q",
+			r.Name(), ns, name, kind, podNameRegex)
 	}
 
 	r.collectPodMetrics(ctx, caller, ns, podNameRegex, start, now, step)
@@ -240,13 +239,13 @@ func (r *CarbonSpatialShiftingRecommender) CollectData(ctx *framework.Recommenda
 	step := time.Minute
 	ns := ctx.Recommendation.Spec.TargetRef.Namespace
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
+	name := ctx.Recommendation.Spec.TargetRef.Name
 
 	podNameRegex := buildPodNameRegex(ctx)
-	if podNameRegex == "" && (kind == "CronJob" || kind == "Job") {
-		podNameRegex = ctx.Recommendation.Spec.TargetRef.Name + ".*"
-	}
 	if podNameRegex == "" {
-		return fmt.Errorf("no pods found matching selector for %s/%s", ns, ctx.Recommendation.Spec.TargetRef.Name)
+		podNameRegex = name + ".*"
+		klog.V(4).Infof("%s: no pods found for %s/%s (%s), falling back to prefix regex %q",
+			r.Name(), ns, name, kind, podNameRegex)
 	}
 
 	temporal := &CarbonTemporalShiftingRecommender{}
