@@ -10,7 +10,6 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
-// Observe records the idle resource count and estimated energy savings in the Recommendation status.
 func (r *CarbonIdleResourceRecommender) Observe(ctx *framework.RecommendationContext) error {
 	if ctx.Recommendation.Status.Action != "Delete" {
 		return nil
@@ -34,8 +33,6 @@ func (r *CarbonIdleResourceRecommender) Observe(ctx *framework.RecommendationCon
 	return nil
 }
 
-// countIdleResources counts the number of idle classifications in the description.
-// Each "idle:" substring corresponds to one classified idle resource.
 func countIdleResources(description string) int {
 	return strings.Count(description, "idle:")
 }

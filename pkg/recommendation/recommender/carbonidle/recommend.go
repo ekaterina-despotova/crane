@@ -12,13 +12,10 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
-// PreRecommend is a no-op for CarbonIdleResource.
 func (r *CarbonIdleResourceRecommender) PreRecommend(ctx *framework.RecommendationContext) error {
 	return nil
 }
 
-// Recommend classifies pods, containers, and nodes as idle based on energy thresholds
-// and sets Action="Delete" for idle resources.
 func (r *CarbonIdleResourceRecommender) Recommend(ctx *framework.RecommendationContext) error {
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
 

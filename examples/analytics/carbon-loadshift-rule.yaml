@@ -16,4 +16,4 @@ spec:
   namespaceSelector:
     any: true
   recommenders:
-    - name: CarbonLoadShifting
+    - name: CarbonTemporalShifting

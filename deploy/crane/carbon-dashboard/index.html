@@ -132,7 +132,8 @@
                                 <option value="all">All Types</option>
                                 <option value="CarbonIdleResource">Idle Resource</option>
                                 <option value="CarbonRightSizing">Right Sizing</option>
-                                <option value="CarbonLoadShifting">Load Shifting</option>
+                                <option value="CarbonTemporalShifting">Temporal Shifting</option>
+                                <option value="CarbonSpatialShifting">Spatial Shifting</option>
                             </select>
                             <select id="filter-action" onchange="filterRecommendations()">
                                 <option value="all">All Actions</option>
@@ -154,15 +155,15 @@
         </div>
     </div>
 
-    <!-- Apply Modal -->
+    <!-- Modal -->
     <div class="modal-overlay" id="apply-modal">
         <div class="modal">
-            <h3>Apply Recommendation</h3>
+            <h3 id="modal-title">Apply Recommendation</h3>
             <p id="modal-target" style="margin-bottom: 12px; color: #666;"></p>
             <pre id="modal-patch"></pre>
             <div id="modal-status"></div>
             <div class="modal-buttons">
-                <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+                <button class="btn-cancel" id="btn-cancel" onclick="closeModal()">Cancel</button>
                 <button class="btn-confirm" id="btn-do-apply" onclick="doApply()">Apply</button>
             </div>
         </div>
@@ -241,17 +242,20 @@
             allRecommendations = items.filter(r => 
                 r.spec.type === 'CarbonIdleResource' || 
                 r.spec.type === 'CarbonRightSizing' || 
-                r.spec.type === 'CarbonLoadShifting'
+                r.spec.type === 'CarbonTemporalShifting' ||
+                r.spec.type === 'CarbonSpatialShifting'
             );
 
             const idle = allRecommendations.filter(r => r.spec.type === 'CarbonIdleResource' && r.status?.action === 'Delete').length;
             const rightsize = allRecommendations.filter(r => r.spec.type === 'CarbonRightSizing' && r.status?.action === 'Patch').length;
-            const shift = allRecommendations.filter(r => r.spec.type === 'CarbonLoadShifting' && r.status?.action === 'Patch').length;
+            const temporal = allRecommendations.filter(r => r.spec.type === 'CarbonTemporalShifting' && r.status?.action === 'Patch').length;
+            const spatial = allRecommendations.filter(r => r.spec.type === 'CarbonSpatialShifting' && r.status?.action === 'Patch').length;
 
             document.getElementById('rec-summary-cards').innerHTML = `
                 <div class="card"><div class="card-label">Idle Resources (Delete)</div><div class="card-value red">${idle}</div></div>
                 <div class="card"><div class="card-label">Right-Sizing (Patch)</div><div class="card-value orange">${rightsize}</div></div>
-                <div class="card"><div class="card-label">Load Shifting (Shift)</div><div class="card-value green">${shift}</div></div>
+                <div class="card"><div class="card-label">Temporal Shifting</div><div class="card-value green">${temporal}</div></div>
+                <div class="card"><div class="card-label">Spatial Shifting</div><div class="card-value green">${spatial}</div></div>
                 <div class="card"><div class="card-label">Total Analyzed</div><div class="card-value">${allRecommendations.length}</div></div>
             `;
 
@@ -285,8 +289,20 @@
             const badgeClass = action === 'Delete' ? 'badge-delete' : action === 'Patch' ? 'badge-patch' : 'badge-none';
             const hasAction = (action === 'Delete' || action === 'Patch') && r.status?.recommendedInfo;
 
+            const isShiftType = (type === 'TemporalShifting' || type === 'SpatialShifting');
             const isPodWithNoAction = r.spec.targetRef?.kind === 'Pod' && !r.status?.recommendedInfo;
             const isApplied = appliedSet.has(r.metadata.name);
+
+            let actionCell = '';
+            if (isApplied) {
+                actionCell = '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>';
+            } else if (isShiftType && hasAction) {
+                actionCell = `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Info</button>`;
+            } else if (!isShiftType && hasAction) {
+                actionCell = `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>`;
+            } else if (isPodWithNoAction) {
+                actionCell = `<button class="btn-apply" style="background:#888;font-size:11px;" onclick='showPodInfo("${r.spec.targetRef?.name}")'>Info</button>`;
+            }
 
             rows += `<tr style="${isApplied ? 'opacity:0.6;background:#f0fff0;' : ''}">
                 <td><strong>${target}</strong><br><small style="color:#888">${r.spec.targetRef?.kind}</small></td>
@@ -294,7 +310,7 @@
                 <td>${type}</td>
                 <td><span class="badge ${badgeClass}">${action}</span></td>
                 <td><div class="desc-text">${desc}</div></td>
-                <td>${isApplied ? '<span class="badge" style="background:#d4edda;color:#155724;">Applied</span>' : hasAction && type !== 'LoadShifting' ? `<button class="btn-apply" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>Apply</button>` : hasAction && type === 'LoadShifting' ? `<button class="btn-apply" style="background:#27ae60;" onclick='openApplyModal(${JSON.stringify(JSON.stringify(r))})'>View</button>` : isPodWithNoAction ? `<button class="btn-apply" style="background:#888;font-size:11px;" onclick='showPodInfo("${r.spec.targetRef?.name}")'>Info</button>` : ''}</td>
+                <td>${actionCell}</td>
             </tr>`;
         });
 
@@ -303,25 +319,121 @@
 
     function openApplyModal(recJson) {
         currentApplyRec = JSON.parse(recJson);
-        const target = `${currentApplyRec.spec.targetRef?.kind}/${currentApplyRec.spec.targetRef?.namespace}/${currentApplyRec.spec.targetRef?.name}`;
-        const patch = currentApplyRec.status?.recommendedInfo || 'No patch available';
+        const type = currentApplyRec.spec.type;
+        const targetRef = currentApplyRec.spec.targetRef;
+        const target = `${targetRef?.kind}/${targetRef?.namespace}/${targetRef?.name}`;
+        const patch = currentApplyRec.status?.recommendedInfo || '';
+        const isShift = (type === 'CarbonTemporalShifting' || type === 'CarbonSpatialShifting');
 
         document.getElementById('modal-target').textContent = `Target: ${target}`;
-        try {
-            document.getElementById('modal-patch').textContent = JSON.stringify(JSON.parse(patch), null, 2);
-        } catch {
-            document.getElementById('modal-patch').textContent = patch;
-        }
         document.getElementById('modal-status').innerHTML = '';
+        document.getElementById('btn-do-apply').style.display = isShift ? 'none' : '';
+        document.getElementById('btn-cancel').textContent = isShift ? 'Close' : 'Cancel';
         document.getElementById('btn-do-apply').textContent = 'Apply';
         document.getElementById('btn-do-apply').disabled = false;
-        document.getElementById('btn-do-apply').style.display = '';
         document.getElementById('btn-do-apply').onclick = doApply;
+
+        if (type === 'CarbonTemporalShifting') {
+            document.getElementById('modal-title').textContent = 'Temporal Shifting Recommendation';
+            try {
+                const info = JSON.parse(patch);
+                const s = info.estimatedSavings || {};
+                document.getElementById('modal-patch').style.display = 'none';
+                document.getElementById('modal-status').innerHTML = `
+                    <div class="status-msg status-success" style="margin-top:0;font-size:14px;line-height:1.8;">
+                        <div style="font-size:16px;font-weight:700;margin-bottom:8px;">
+                            ⏰ Run during <strong>${info.targetWindow || '-'}</strong>
+                        </div>
+                        <div style="color:#555;margin-bottom:12px;">
+                            Current peak hours: <strong>${info.currentPeakHours || 'none'}</strong>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">Carbon savings</div>
+                                <div style="font-size:18px;font-weight:700;color:#27ae60;">${(s.gramsCO2PerDay || 0).toFixed(1)} gCO₂/day</div>
+                            </div>
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">Reduction</div>
+                                <div style="font-size:18px;font-weight:700;color:#27ae60;">${(s.reductionPercent || 0).toFixed(0)}%</div>
+                            </div>
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">Current emissions</div>
+                                <div style="font-size:15px;font-weight:600;color:#e74c3c;">${(s.currentGCO2PerDay || 0).toFixed(1)} gCO₂/day</div>
+                            </div>
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">After shift</div>
+                                <div style="font-size:15px;font-weight:600;color:#27ae60;">${(s.shiftedGCO2PerDay || 0).toFixed(1)} gCO₂/day</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:10px;font-size:12px;color:#888;">Data source: ${info.dataSource || 'static configuration'}</div>
+                    </div>`;
+            } catch {
+                document.getElementById('modal-patch').style.display = '';
+                document.getElementById('modal-patch').textContent = patch;
+            }
+
+        } else if (type === 'CarbonSpatialShifting') {
+            document.getElementById('modal-title').textContent = 'Spatial Shifting Recommendation';
+            try {
+                const info = JSON.parse(patch);
+                document.getElementById('modal-patch').style.display = 'none';
+                document.getElementById('modal-status').innerHTML = `
+                    <div class="status-msg status-success" style="margin-top:0;font-size:14px;line-height:1.8;">
+                        <div style="font-size:16px;font-weight:700;margin-bottom:8px;">
+                            🌍 Migrate to <strong>${info.bestZone || '-'}</strong>
+                            <span style="font-size:13px;font-weight:400;color:#555;">from ${info.currentZone || '-'}</span>
+                        </div>
+                        <div style="color:#555;margin-bottom:12px;">
+                            ${info.currentZone || '-'}: <strong>${(info['currentIntensity_gCO2_kWh'] || 0).toFixed(1)} gCO₂/kWh</strong>
+                            &rarr; ${info.bestZone || '-'}: <strong>${(info['bestIntensity_gCO2_kWh'] || 0).toFixed(1)} gCO₂/kWh</strong>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">Carbon savings</div>
+                                <div style="font-size:18px;font-weight:700;color:#27ae60;">${(info['estimatedSavings_gCO2_day'] || 0).toFixed(1)} gCO₂/day</div>
+                            </div>
+                            <div style="background:#fff;border-radius:6px;padding:8px;">
+                                <div style="font-size:11px;color:#888;text-transform:uppercase;">Reduction</div>
+                                <div style="font-size:18px;font-weight:700;color:#27ae60;">${(info.reductionPercent || 0).toFixed(0)}%</div>
+                            </div>
+                        </div>
+                        ${(info.zoneRankings || []).length > 1 ? `
+                        <div style="margin-top:12px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.4px;">All zones ranked</div>
+                        <div style="margin-top:6px;">
+                            ${(info.zoneRankings || []).map(z => {
+                                const isBest = z.zone === info.bestZone;
+                                const isCurrent = z.zone === info.currentZone;
+                                return `<div style="display:flex;justify-content:space-between;padding:4px 8px;border-radius:4px;margin-bottom:2px;background:${isBest ? '#e8f5e9' : isCurrent ? '#fff8e1' : '#f5f7fa'};font-weight:${isBest ? '700' : '400'};">
+                                    <span>${z.zone}${isCurrent ? ' <span style="color:#888;font-size:11px;">(current)</span>' : ''}${isBest ? ' ✓' : ''}</span>
+                                    <span style="color:#666;">${(z['intensity_gCO2_kWh'] || 0).toFixed(1)} gCO₂/kWh</span>
+                                </div>`;
+                            }).join('')}
+                        </div>` : ''}
+                        <div style="margin-top:10px;font-size:12px;color:#888;">Data source: ${info.dataSource || 'Electricity Maps API'}</div>
+                    </div>`;
+            } catch {
+                document.getElementById('modal-patch').style.display = '';
+                document.getElementById('modal-patch').textContent = patch;
+            }
+
+        } else {
+            document.getElementById('modal-title').textContent = 'Apply Recommendation';
+            document.getElementById('modal-patch').style.display = '';
+            try {
+                document.getElementById('modal-patch').textContent = JSON.stringify(JSON.parse(patch), null, 2);
+            } catch {
+                document.getElementById('modal-patch').textContent = patch || 'No patch available';
+            }
+        }
+
         document.getElementById('apply-modal').classList.add('show');
     }
 
     function closeModal() {
         document.getElementById('apply-modal').classList.remove('show');
+        document.getElementById('btn-cancel').textContent = 'Cancel';
+        document.getElementById('btn-do-apply').style.display = '';
+        document.getElementById('modal-patch').style.display = '';
         currentApplyRec = null;
     }
 
@@ -332,30 +444,9 @@
         btn.textContent = 'Applying...';
 
         const target = currentApplyRec.spec.targetRef;
-        const type = currentApplyRec.spec.type;
         const action = currentApplyRec.status?.action;
         const recName = currentApplyRec.metadata.name;
         const recNs = currentApplyRec.metadata.namespace;
-
-        if (type === 'CarbonLoadShifting') {
-            const patch = currentApplyRec.status?.recommendedInfo;
-            try {
-                const info = JSON.parse(patch);
-                document.getElementById('modal-status').innerHTML = `
-                    <div class="status-msg status-success">
-                        <strong>Recommendation:</strong> Shift workload to <strong>${info.targetWindow}</strong><br>
-                        <strong>Current peak hours:</strong> ${info.currentPeakHours}<br>
-                        <strong>Estimated savings:</strong> ${info.estimatedSavings.gramsCO2PerDay.toFixed(1)} gCO2/day (${info.estimatedSavings.reductionPercent.toFixed(0)}% reduction)<br>
-                        <strong>Data source:</strong> ${info.dataSource || 'static configuration'}<br><br>
-                        <em>To implement: adjust your CronJob schedule or deployment scaling policy to avoid high-carbon hours.</em>
-                    </div>`;
-            } catch(e) {
-                document.getElementById('modal-status').innerHTML = `<div class="status-msg">${patch}</div>`;
-            }
-            btn.disabled = false;
-            btn.textContent = 'Close';
-            return;
-        }
 
         try {
             const resp = await fetch(`${CRANED_URL}/recommendation/adopt/${recNs}/${recName}`, {
@@ -417,6 +508,7 @@
             </div>`;
         }
 
+        document.getElementById('modal-title').textContent = 'Pod Info';
         document.getElementById('modal-target').textContent = `Pod: ${podName}`;
         document.getElementById('modal-patch').textContent = 'Pod is controller-owned — cannot be deleted directly.';
         document.getElementById('modal-status').innerHTML = msg;

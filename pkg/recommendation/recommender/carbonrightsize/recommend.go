@@ -15,33 +15,26 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 )
 
-// PatchResource represents a JSON patch for updating container resources.
 type PatchResource struct {
 	Spec PatchResourceSpec `json:"spec,omitempty"`
 }
 
-// PatchResourceSpec holds the template for patching.
 type PatchResourceSpec struct {
 	Template PatchResourcePodTemplateSpec `json:"template"`
 }
 
-// PatchResourcePodTemplateSpec wraps the pod spec for patching.
 type PatchResourcePodTemplateSpec struct {
 	Spec PatchResourcePodSpec `json:"spec,omitempty"`
 }
 
-// PatchResourcePodSpec holds containers for patching.
 type PatchResourcePodSpec struct {
 	Containers []corev1.Container `json:"containers" patchStrategy:"merge" patchMergeKey:"name"`
 }
 
-// PreRecommend is a no-op for CarbonRightSizing.
 func (r *CarbonRightSizingRecommender) PreRecommend(ctx *framework.RecommendationContext) error {
 	return nil
 }
 
-// Recommend computes recommended CPU/memory from percentiles weighted by energy,
-// adjusts limits proportionally, and sets Action="Patch" for resources that need right-sizing.
 func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationContext) error {
 	efficiencyList := ctx.InputValue(keyEnergyEfficiency)
 	cpuUsageList := ctx.InputValue(keyCPUUsage)
@@ -58,14 +51,12 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 	for _, c := range ctx.PodTemplate.Spec.Containers {
 		effRatio := r.getEfficiencyForPod(efficiencyList)
 
-		// Only right-size if efficiency is below target.
 		if effRatio >= r.energyEfficiencyTarget {
 			klog.Infof("%s: container %s efficiency %.4f >= target %.4f, skipping",
 				r.Name(), c.Name, effRatio, r.energyEfficiencyTarget)
 			continue
 		}
 
-		// Compute recommended CPU from percentile of actual usage weighted by energy.
 		recCPU := r.computePercentile(cpuUsageList, r.cpuPercentile)
 		recMem := r.computePercentile(memUsageList, r.memoryPercentile)
 
@@ -78,7 +69,6 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 		cpuQuantity := resource.NewMilliQuantity(int64(math.Ceil(recCPU*1000)), resource.DecimalSI)
 		memQuantity := resource.NewQuantity(int64(math.Ceil(recMem)), resource.BinarySI)
 
-		// Adjust limits proportionally if recommendation exceeds current limit.
 		cpuLimit, memLimit := r.adjustLimits(c, cpuQuantity, memQuantity)
 
 		newContainerSpec := corev1.Container{
@@ -129,7 +119,6 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 	ctx.Recommendation.Status.Action = "Patch"
 	ctx.Recommendation.Status.Description = strings.Join(descriptions, "; ")
 
-	// Encode patches into recommendation status.
 	var newPatch PatchResource
 	newPatch.Spec.Template.Spec.Containers = newContainers
 	newPatchBytes, err := json.Marshal(newPatch)
@@ -150,21 +139,17 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 	return nil
 }
 
-// getEfficiencyForPod returns the energy-efficiency ratio for the first pod in the list,
-// or 0 if no efficiency data is available.
 func (r *CarbonRightSizingRecommender) getEfficiencyForPod(efficiencyList []*common.TimeSeries) float64 {
 	if len(efficiencyList) == 0 {
 		return 0
 	}
-	// Use the first pod's efficiency ratio as representative.
+
 	if len(efficiencyList[0].Samples) == 0 {
 		return 0
 	}
 	return efficiencyList[0].Samples[0].Value
 }
 
-// computePercentile computes the p-th percentile from a set of time series samples.
-// All samples across all time series are merged and sorted before computing the percentile.
 func (r *CarbonRightSizingRecommender) computePercentile(tsList []*common.TimeSeries, p float64) float64 {
 	var values []float64
 	for _, ts := range tsList {
@@ -179,7 +164,6 @@ func (r *CarbonRightSizingRecommender) computePercentile(tsList []*common.TimeSe
 	}
 	sort.Float64s(values)
 
-	// Nearest-rank percentile method.
 	idx := int(math.Ceil(p*float64(len(values)))) - 1
 	if idx < 0 {
 		idx = 0
@@ -190,9 +174,6 @@ func (r *CarbonRightSizingRecommender) computePercentile(tsList []*common.TimeSe
 	return values[idx]
 }
 
-// adjustLimits computes new CPU and memory limits. If the recommended request exceeds
-// the current limit, the limit is adjusted proportionally to maintain the original
-// request-to-limit ratio. Otherwise, the current limit is preserved.
 func (r *CarbonRightSizingRecommender) adjustLimits(
 	c corev1.Container,
 	newCPUReq *resource.Quantity,
@@ -211,28 +192,19 @@ func (r *CarbonRightSizingRecommender) adjustLimits(
 	return cpuLimit, memLimit
 }
 
-// adjustSingleLimit adjusts a single resource limit based on the new request.
-// If newReq > currentLimit, the new limit is set to newReq / ratio where
-// ratio = currentReq / currentLimit, preserving the original request-to-limit ratio.
 func adjustSingleLimit(currentReq, currentLimit, newReq resource.Quantity) resource.Quantity {
 	if currentLimit.IsZero() {
-		// No limit set; use the new request as the limit.
 		return newReq.DeepCopy()
 	}
 
 	if newReq.Cmp(currentLimit) <= 0 {
-		// New request fits within current limit; preserve it.
 		return currentLimit.DeepCopy()
 	}
 
-	// New request exceeds current limit; adjust proportionally.
 	if currentReq.IsZero() {
-		// No current request; just use the new request as the limit.
 		return newReq.DeepCopy()
 	}
 
-	// ratio = currentReq / currentLimit
-	// newLimit = newReq / ratio = newReq * (currentLimit / currentReq)
 	ratio := float64(currentReq.MilliValue()) / float64(currentLimit.MilliValue())
 	if ratio <= 0 {
 		return newReq.DeepCopy()
@@ -241,10 +213,6 @@ func adjustSingleLimit(currentReq, currentLimit, newReq resource.Quantity) resou
 	return *resource.NewMilliQuantity(int64(math.Ceil(newLimitValue)), currentLimit.Format)
 }
 
-// Policy generates right-sizing manifests preserving unmodified fields,
-// encoded via ConvertToRecommendationInfos.
 func (r *CarbonRightSizingRecommender) Policy(ctx *framework.RecommendationContext) error {
-	// The Recommend phase already encodes the patches into RecommendedInfo/CurrentInfo.
-	// Policy is a no-op for CarbonRightSizing since manifest generation is done in Recommend.
 	return nil
 }

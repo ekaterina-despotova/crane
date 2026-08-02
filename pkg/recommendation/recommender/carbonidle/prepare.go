@@ -57,7 +57,6 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 		return err
 	}
 
-	// Verify Kepler metrics exist by querying kepler_container_package_joules_total.
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
 		keplerAvailabilityExpr,
@@ -83,7 +82,6 @@ func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.Recomm
 	return nil
 }
 
-// CollectData queries Kepler energy metrics from Prometheus and stores them in the context.
 func (r *CarbonIdleResourceRecommender) CollectData(ctx *framework.RecommendationContext) error {
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	now := time.Now()

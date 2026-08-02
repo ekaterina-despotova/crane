@@ -17,7 +17,6 @@ import (
 
 const callerFormat = "CarbonRightSizingRecommender-%s-%s"
 
-// Input value keys for RecommendationContext.
 const (
 	keyPodCPUJoules     = "kepler-pod-cpu-joules"
 	keyPodCPUWatts      = "kepler-pod-cpu-watts"
@@ -27,32 +26,24 @@ const (
 	keyEnergyEfficiency = "kepler-energy-efficiency-ratio"
 )
 
-// Kepler metric availability check — kepler_container_package_joules_total is the
-// primary counter exported by this Kepler version.
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
-// Kepler PromQL expression templates for pod-level metrics.
-// Labels: container_namespace, pod_name, mode. rate() gives watts.
 const (
 	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
 	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 )
 
-// expectedMetricKeys lists the metrics CarbonRightSizing expects to collect.
 var expectedMetricKeys = []string{
 	keyPodCPUJoules, keyPodCPUWatts, keyPodGPUWatts,
 	keyCPUUsage, keyMemUsage,
 }
 
-// CheckDataProviders verifies that Kepler metrics are available in Prometheus.
-// Returns an error if Kepler is not installed or not exporting metrics.
 func (r *CarbonRightSizingRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
 	if err := r.BaseRecommender.CheckDataProviders(ctx); err != nil {
 		return err
 	}
 
-	// Verify Kepler metrics exist by querying kepler_container_package_joules_total.
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	metricNamer := metricnaming.ResourceToGeneralMetricNamer(
 		keplerAvailabilityExpr,
@@ -78,7 +69,6 @@ func (r *CarbonRightSizingRecommender) CheckDataProviders(ctx *framework.Recomme
 	return nil
 }
 
-// CollectData queries Kepler energy metrics and CPU/memory utilization from Prometheus.
 func (r *CarbonRightSizingRecommender) CollectData(ctx *framework.RecommendationContext) error {
 	caller := fmt.Sprintf(callerFormat, klog.KObj(ctx.Recommendation), ctx.Recommendation.UID)
 	now := time.Now()
@@ -88,22 +78,18 @@ func (r *CarbonRightSizingRecommender) CollectData(ctx *framework.Recommendation
 	kind := ctx.Recommendation.Spec.TargetRef.Kind
 	name := ctx.Recommendation.Spec.TargetRef.Name
 
-	// Build pod name regex from retrieved pods.
 	podNameRegex := buildPodNameRegex(ctx)
 	if podNameRegex == "" {
 		return fmt.Errorf("no pods found matching selector for %s/%s", ns, name)
 	}
 
-	// Collect pod-level Kepler energy metrics.
 	r.collectPodEnergyMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 
-	// Collect CPU/memory utilization metrics using Crane's standard expressions.
 	r.collectUtilizationMetrics(ctx, caller, ns, name, kind, start, now, step)
 
 	return nil
 }
 
-// buildPodNameRegex constructs a regex matching all pod names from the context.
 func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	if len(ctx.Pods) == 0 {
 		return ""
@@ -118,7 +104,6 @@ func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	return result
 }
 
-// collectPodEnergyMetrics queries pod-level Kepler energy metrics.
 func (r *CarbonRightSizingRecommender) collectPodEnergyMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, podNameRegex string,
@@ -138,7 +123,6 @@ func (r *CarbonRightSizingRecommender) collectPodEnergyMetrics(
 	}
 }
 
-// collectUtilizationMetrics queries standard CPU/memory utilization metrics.
 func (r *CarbonRightSizingRecommender) collectUtilizationMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, name, kind string,
@@ -151,8 +135,6 @@ func (r *CarbonRightSizingRecommender) collectUtilizationMetrics(
 	r.queryAndStore(ctx, caller, keyMemUsage, memExpr, start, end, step)
 }
 
-// queryAndStore queries a single metric and stores the result in the context.
-// Errors are logged as warnings and the metric is skipped.
 func (r *CarbonRightSizingRecommender) queryAndStore(
 	ctx *framework.RecommendationContext,
 	caller, key, expr string,
@@ -183,15 +165,11 @@ func (r *CarbonRightSizingRecommender) queryAndStore(
 	ctx.AddInputValue(key, tsList)
 }
 
-// PostProcessing computes the energy-efficiency ratio for each pod and validates
-// that sufficient metrics are available.
 func (r *CarbonRightSizingRecommender) PostProcessing(ctx *framework.RecommendationContext) error {
-	// Compute energy-efficiency ratio per pod.
 	if err := r.computeEnergyEfficiencyRatio(ctx); err != nil {
 		klog.Warningf("%s: failed to compute energy-efficiency ratio: %v", r.Name(), err)
 	}
 
-	// Validate metric availability: require ≥50% of expected metrics.
 	if err := r.validateMetricAvailability(ctx); err != nil {
 		return err
 	}
@@ -199,9 +177,6 @@ func (r *CarbonRightSizingRecommender) PostProcessing(ctx *framework.Recommendat
 	return nil
 }
 
-// computeEnergyEfficiencyRatio computes the energy-efficiency ratio for each pod.
-// The ratio is active_energy / total_energy, derived from pod CPU watts correlated
-// with CPU utilization. Stored as a synthetic time series in the context.
 func (r *CarbonRightSizingRecommender) computeEnergyEfficiencyRatio(ctx *framework.RecommendationContext) error {
 	podWattsList := ctx.InputValue(keyPodCPUWatts)
 	cpuUsageList := ctx.InputValue(keyCPUUsage)
@@ -210,10 +185,6 @@ func (r *CarbonRightSizingRecommender) computeEnergyEfficiencyRatio(ctx *framewo
 		return fmt.Errorf("missing pod watts or CPU usage data for energy-efficiency computation")
 	}
 
-	// Compute per-pod efficiency: correlate energy with CPU utilization.
-	// Active energy is approximated as total_watts * cpu_utilization_fraction.
-	// Efficiency = active_energy / total_energy = cpu_utilization_fraction (when
-	// energy is proportional to allocation).
 	var ratioSeries []*common.TimeSeries
 	for _, podTS := range podWattsList {
 		podName := getLabel(podTS, "pod_name")
@@ -226,9 +197,7 @@ func (r *CarbonRightSizingRecommender) computeEnergyEfficiencyRatio(ctx *framewo
 			continue
 		}
 
-		// Estimate active energy fraction from CPU utilization.
-		// If workload-level CPU usage is available, use it as a proxy for the
-		// fraction of energy doing useful work.
+
 		activeAvg := estimateActiveEnergy(cpuUsageList, totalAvg)
 
 		ratio := activeAvg / totalAvg
@@ -258,22 +227,17 @@ func (r *CarbonRightSizingRecommender) computeEnergyEfficiencyRatio(ctx *framewo
 	return nil
 }
 
-// estimateActiveEnergy estimates the active energy from CPU usage time series.
-// Returns the average CPU usage value as a proxy for active energy fraction.
+
 func estimateActiveEnergy(cpuUsageList []*common.TimeSeries, totalWatts float64) float64 {
 	if len(cpuUsageList) == 0 {
 		return 0
 	}
-	// Use the first (aggregated) CPU usage time series.
 	cpuAvg := avgSamples(cpuUsageList[0].Samples)
-	// CPU usage in cores; normalize against total watts to get active fraction.
-	// This is a simplified model: active_energy ≈ total_watts * (cpu_usage / max_cpu).
-	// Since we don't have max_cpu here, we use the raw ratio as a proxy.
+
 	if cpuAvg <= 0 {
 		return 0
 	}
-	// Return the fraction of total watts attributable to active work.
-	// Capped at totalWatts to keep ratio ≤ 1.
+
 	active := cpuAvg * totalWatts
 	if active > totalWatts {
 		active = totalWatts
@@ -281,7 +245,6 @@ func estimateActiveEnergy(cpuUsageList []*common.TimeSeries, totalWatts float64)
 	return active
 }
 
-// getLabel returns the value of a label from a time series, or empty string if not found.
 func getLabel(ts *common.TimeSeries, name string) string {
 	for _, l := range ts.Labels {
 		if l.Name == name {
@@ -291,7 +254,6 @@ func getLabel(ts *common.TimeSeries, name string) string {
 	return ""
 }
 
-// avgSamples computes the arithmetic mean of sample values.
 func avgSamples(samples []common.Sample) float64 {
 	if len(samples) == 0 {
 		return 0
@@ -303,9 +265,6 @@ func avgSamples(samples []common.Sample) float64 {
 	return sum / float64(len(samples))
 }
 
-// validateMetricAvailability checks that at least 50% of expected metrics
-// are present in the context. If fewer than 50% are available, the recommendation
-// is skipped with a descriptive status.
 func (r *CarbonRightSizingRecommender) validateMetricAvailability(ctx *framework.RecommendationContext) error {
 	available := 0
 	for _, key := range expectedMetricKeys {
