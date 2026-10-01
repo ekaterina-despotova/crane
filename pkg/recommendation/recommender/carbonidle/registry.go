@@ -1,6 +1,8 @@
 package carbonidle
 
 import (
+	"strings"
+
 	analysisv1alph1 "github.com/gocrane/api/analysis/v1alpha1"
 	"github.com/gocrane/crane/pkg/recommendation/config"
 	"github.com/gocrane/crane/pkg/recommendation/recommender"
@@ -16,6 +18,10 @@ type CarbonIdleResourceRecommender struct {
 	observationDays     int64
 	minEnergyWatts      float64
 	cpuUsageThreshold   float64
+
+	sustainedIdleFraction float64 
+	protectedLabel        string 
+	protectedNamespaces   []string
 }
 
 func init() {
@@ -49,11 +55,30 @@ func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule a
 		return nil, err
 	}
 
+	sustainedIdleFraction, err := rec.GetConfigFloat("sustained-idle-fraction", 0.95)
+	if err != nil {
+		return nil, err
+	}
+
+	protectedLabel := rec.GetConfigString("protected-label", "carbon.crane.io/protected")
+
+	var protectedNamespaces []string
+	if raw := rec.GetConfigString("protected-namespaces", "kube-system"); raw != "" {
+		for _, ns := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(ns); trimmed != "" {
+				protectedNamespaces = append(protectedNamespaces, trimmed)
+			}
+		}
+	}
+
 	return &CarbonIdleResourceRecommender{
-		BaseRecommender:     *base.NewBaseRecommender(rec),
-		energyIdleThreshold: energyIdleThreshold,
-		observationDays:     observationDays,
-		minEnergyWatts:      minEnergyWatts,
-		cpuUsageThreshold:   cpuUsageThreshold,
+		BaseRecommender:       *base.NewBaseRecommender(rec),
+		energyIdleThreshold:   energyIdleThreshold,
+		observationDays:       observationDays,
+		minEnergyWatts:        minEnergyWatts,
+		cpuUsageThreshold:     cpuUsageThreshold,
+		sustainedIdleFraction: sustainedIdleFraction,
+		protectedLabel:        protectedLabel,
+		protectedNamespaces:   protectedNamespaces,
 	}, nil
 }

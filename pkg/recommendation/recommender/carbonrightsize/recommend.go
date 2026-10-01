@@ -66,8 +66,22 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 			continue
 		}
 
-		cpuQuantity := resource.NewMilliQuantity(int64(math.Ceil(recCPU*1000)), resource.DecimalSI)
-		memQuantity := resource.NewQuantity(int64(math.Ceil(recMem)), resource.BinarySI)
+		recCPUms := int64(math.Ceil(recCPU * 1000))
+		recMemBytes := int64(math.Ceil(recMem))
+
+		if recCPUms < r.minCPUMillicores {
+			klog.Infof("%s: container %s recommended CPU %dm below floor %dm, clamping",
+				r.Name(), c.Name, recCPUms, r.minCPUMillicores)
+			recCPUms = r.minCPUMillicores
+		}
+		if recMemBytes < r.minMemoryBytes {
+			klog.Infof("%s: container %s recommended memory %d bytes below floor %d bytes, clamping",
+				r.Name(), c.Name, recMemBytes, r.minMemoryBytes)
+			recMemBytes = r.minMemoryBytes
+		}
+
+		cpuQuantity := resource.NewMilliQuantity(recCPUms, resource.DecimalSI)
+		memQuantity := resource.NewQuantity(recMemBytes, resource.BinarySI)
 
 		cpuLimit, memLimit := r.adjustLimits(c, cpuQuantity, memQuantity)
 

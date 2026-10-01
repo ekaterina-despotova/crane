@@ -16,6 +16,9 @@ type CarbonRightSizingRecommender struct {
 	observationDays        int64
 	cpuPercentile          float64
 	memoryPercentile       float64
+
+	minCPUMillicores int64
+	minMemoryBytes   int64
 }
 
 func init() {
@@ -49,11 +52,23 @@ func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule an
 		return nil, err
 	}
 
+	minCPU, err := rec.GetConfigInt("min-cpu-millicores", 10)
+	if err != nil {
+		return nil, err
+	}
+
+	minMem, err := rec.GetConfigInt("min-memory-mib", 16)
+	if err != nil {
+		return nil, err
+	}
+
 	return &CarbonRightSizingRecommender{
 		BaseRecommender:        *base.NewBaseRecommender(rec),
 		energyEfficiencyTarget: energyEfficiencyTarget,
 		observationDays:        observationDays,
 		cpuPercentile:          cpuPercentile,
 		memoryPercentile:       memoryPercentile,
+		minCPUMillicores:       minCPU,
+		minMemoryBytes:         minMem * 1024 * 1024,
 	}, nil
 }

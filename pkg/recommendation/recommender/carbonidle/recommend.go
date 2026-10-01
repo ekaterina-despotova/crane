@@ -28,6 +28,15 @@ func (r *CarbonIdleResourceRecommender) Recommend(ctx *framework.RecommendationC
 }
 
 func (r *CarbonIdleResourceRecommender) recommendWorkload(ctx *framework.RecommendationContext) error {
+	if reason := r.protectedReason(ctx); reason != "" {
+		ctx.Recommendation.Status.Action = "None"
+		ctx.Recommendation.Status.Description = fmt.Sprintf(
+			"Workload %s/%s is protected from idle shutdown: %s",
+			ctx.Recommendation.Spec.TargetRef.Namespace,
+			ctx.Recommendation.Spec.TargetRef.Name, reason)
+		return nil
+	}
+
 	podWattsList := ctx.InputValue(keyPodCPUWatts)
 	if len(podWattsList) == 0 {
 		return fmt.Errorf("no pod energy data available for idle classification")
@@ -44,11 +53,17 @@ func (r *CarbonIdleResourceRecommender) recommendWorkload(ctx *framework.Recomme
 		avgPower := avgSamples(ts.Samples)
 		cpuUtil := r.cpuUtilForPod(podName, ctx)
 
-		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
-			desc := fmt.Sprintf("Pod %s/%s idle: avg power %.4fW < %.4fW, CPU util %.2f%% < %.2f%%",
-				podNS, podName, avgPower, r.minEnergyWatts, cpuUtil*100, r.cpuUsageThreshold*100)
+		idleFrac := fractionBelow(ts.Samples, r.minEnergyWatts)
+
+		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold && idleFrac >= r.sustainedIdleFraction {
+			desc := fmt.Sprintf("Pod %s/%s idle: avg power %.4fW < %.4fW, CPU util %.2f%% < %.2f%%, idle for %.0f%% of window (>= %.0f%%)",
+				podNS, podName, avgPower, r.minEnergyWatts, cpuUtil*100, r.cpuUsageThreshold*100,
+				idleFrac*100, r.sustainedIdleFraction*100)
 			idleDescriptions = append(idleDescriptions, desc)
 			klog.Infof("%s: %s", r.Name(), desc)
+		} else if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
+			klog.Infof("%s: Pod %s/%s low-power on average but only idle %.0f%% of window (< %.0f%% required) — not flagged",
+				r.Name(), podNS, podName, idleFrac*100, r.sustainedIdleFraction*100)
 		}
 	}
 
@@ -102,7 +117,8 @@ func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.Recommendat
 		}
 		avgPower := avgSamples(ts.Samples)
 		cpuUtil := r.cpuUtilForPod(podName, ctx)
-		if avgPower >= r.minEnergyWatts || cpuUtil >= r.cpuUsageThreshold {
+		idleFrac := fractionBelow(ts.Samples, r.minEnergyWatts)
+		if avgPower >= r.minEnergyWatts || cpuUtil >= r.cpuUsageThreshold || idleFrac < r.sustainedIdleFraction {
 			activePods = append(activePods, podName)
 		} else {
 			idleCount++
@@ -183,6 +199,40 @@ func avgSamples(samples []common.Sample) float64 {
 		sum += s.Value
 	}
 	return sum / float64(len(samples))
+}
+
+func fractionBelow(samples []common.Sample, threshold float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	var below int
+	for _, s := range samples {
+		if s.Value < threshold {
+			below++
+		}
+	}
+	return float64(below) / float64(len(samples))
+}
+
+func (r *CarbonIdleResourceRecommender) protectedReason(ctx *framework.RecommendationContext) string {
+	ns := ctx.Recommendation.Spec.TargetRef.Namespace
+	for _, p := range r.protectedNamespaces {
+		if p == ns {
+			return fmt.Sprintf("namespace %q is in the protected list", ns)
+		}
+	}
+
+	if r.protectedLabel != "" {
+		if v, ok := ctx.Object.GetLabels()[r.protectedLabel]; ok && v == "true" {
+			return fmt.Sprintf("workload carries protected label %q", r.protectedLabel)
+		}
+		for i := range ctx.Pods {
+			if v, ok := ctx.Pods[i].Labels[r.protectedLabel]; ok && v == "true" {
+				return fmt.Sprintf("pod %s carries protected label %q", ctx.Pods[i].Name, r.protectedLabel)
+			}
+		}
+	}
+	return ""
 }
 
 type PatchReplicas struct {
