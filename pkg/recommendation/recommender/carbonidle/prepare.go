@@ -25,6 +25,8 @@ const (
 	keyNodeCPUJoules      = "kepler-node-cpu-joules"
 	keyNodeCPUWatts       = "kepler-node-cpu-watts"
 	keyNodeCPUActiveWatts = "kepler-node-cpu-active-watts"
+	keyPodCPUCores = "pod-cpu-cores"
+	keyPodNetBytes = "pod-net-bytes"
 )
 
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
@@ -50,6 +52,11 @@ const (
 const (
 	keplerPodCPUWattsNoNSExpr       = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{pod_name=~"%s",mode="dynamic"}[5m]))`
 	keplerContainerCPUWattsNoNSExpr = `rate(kepler_container_package_joules_total{pod_name=~"%s",mode="dynamic"}[5m])`
+)
+
+const (
+	cpuCoresExpr = `sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="%s",pod=~"%s",container!=""}[5m]))`
+	netBytesExpr = `sum by (pod) (rate(container_network_receive_bytes_total{namespace="%s",pod=~"%s"}[5m]) + rate(container_network_transmit_bytes_total{namespace="%s",pod=~"%s"}[5m]))`
 )
 
 func (r *CarbonIdleResourceRecommender) CheckDataProviders(ctx *framework.RecommendationContext) error {
@@ -100,12 +107,17 @@ func (r *CarbonIdleResourceRecommender) CollectData(ctx *framework.Recommendatio
 				fmt.Sprintf(keplerPodCPUWattsNoNSExpr, podNameRegex), start, now, step)
 			r.queryAndStore(ctx, caller, keyContainerCPUWatts,
 				fmt.Sprintf(keplerContainerCPUWattsNoNSExpr, podNameRegex), start, now, step)
+			r.queryAndStore(ctx, caller, keyPodCPUCores,
+				fmt.Sprintf(`sum by (pod) (rate(container_cpu_usage_seconds_total{pod=~"%s",container!=""}[5m]))`, podNameRegex), start, now, step)
+			r.queryAndStore(ctx, caller, keyPodNetBytes,
+				fmt.Sprintf(`sum by (pod) (rate(container_network_receive_bytes_total{pod=~"%s"}[5m]) + rate(container_network_transmit_bytes_total{pod=~"%s"}[5m]))`, podNameRegex, podNameRegex), start, now, step)
 		}
 		return nil
 
 	case "Pod":
 		r.collectPodMetrics(ctx, caller, ns, name, start, now, step)
 		r.collectContainerMetrics(ctx, caller, ns, name, start, now, step)
+		r.collectActivityMetrics(ctx, caller, ns, name, start, now, step)
 		return nil
 
 	default:
@@ -115,8 +127,20 @@ func (r *CarbonIdleResourceRecommender) CollectData(ctx *framework.Recommendatio
 		}
 		r.collectPodMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 		r.collectContainerMetrics(ctx, caller, ns, podNameRegex, start, now, step)
+		r.collectActivityMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 		return nil
 	}
+}
+
+func (r *CarbonIdleResourceRecommender) collectActivityMetrics(
+	ctx *framework.RecommendationContext,
+	caller, namespace, podNameRegex string,
+	start, end time.Time, step time.Duration,
+) {
+	r.queryAndStore(ctx, caller, keyPodCPUCores,
+		fmt.Sprintf(cpuCoresExpr, namespace, podNameRegex), start, end, step)
+	r.queryAndStore(ctx, caller, keyPodNetBytes,
+		fmt.Sprintf(netBytesExpr, namespace, podNameRegex, namespace, podNameRegex), start, end, step)
 }
 
 func buildPodNameRegex(ctx *framework.RecommendationContext) string {
@@ -238,11 +262,11 @@ func (r *CarbonIdleResourceRecommender) validateMetricAvailability(ctx *framewor
 	var required []string
 	switch kind {
 	case "Node":
-		required = []string{keyNodeCPUWatts, keyPodCPUWatts}
+		required = []string{keyPodCPUCores}
 	case "Pod":
-		required = []string{keyPodCPUWatts}
+		required = []string{keyPodCPUCores}
 	default:
-		required = []string{keyPodCPUWatts, keyContainerCPUWatts}
+		required = []string{keyPodCPUCores}
 	}
 
 	for _, key := range required {

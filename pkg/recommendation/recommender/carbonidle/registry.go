@@ -16,11 +16,14 @@ type CarbonIdleResourceRecommender struct {
 	base.BaseRecommender
 	energyIdleThreshold float64
 	observationDays     int64
-	minEnergyWatts      float64
-	cpuUsageThreshold   float64
+	minEnergyWatts      float64 
+	cpuUsageThreshold   float64 
 
-	sustainedIdleFraction float64 
-	protectedLabel        string 
+	cpuCoresThreshold  float64 
+	netBytesThreshold  float64 
+
+	sustainedIdleFraction float64
+	protectedLabel        string
 	protectedNamespaces   []string
 }
 
@@ -60,6 +63,16 @@ func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule a
 		return nil, err
 	}
 
+	cpuCoresThreshold, err := rec.GetConfigFloat("cpu-cores-threshold", 0.075)
+	if err != nil {
+		return nil, err
+	}
+
+	netBytesThreshold, err := rec.GetConfigFloat("network-bytes-threshold", 1000)
+	if err != nil {
+		return nil, err
+	}
+
 	protectedLabel := rec.GetConfigString("protected-label", "carbon.crane.io/protected")
 
 	var protectedNamespaces []string
@@ -77,6 +90,8 @@ func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule a
 		observationDays:       observationDays,
 		minEnergyWatts:        minEnergyWatts,
 		cpuUsageThreshold:     cpuUsageThreshold,
+		cpuCoresThreshold:     cpuCoresThreshold,
+		netBytesThreshold:     netBytesThreshold,
 		sustainedIdleFraction: sustainedIdleFraction,
 		protectedLabel:        protectedLabel,
 		protectedNamespaces:   protectedNamespaces,

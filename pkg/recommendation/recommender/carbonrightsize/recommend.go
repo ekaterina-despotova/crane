@@ -20,7 +20,8 @@ type PatchResource struct {
 }
 
 type PatchResourceSpec struct {
-	Template PatchResourcePodTemplateSpec `json:"template"`
+	Replicas *int32 `json:"replicas,omitempty"`
+	Template *PatchResourcePodTemplateSpec `json:"template,omitempty"`
 }
 
 type PatchResourcePodTemplateSpec struct {
@@ -124,24 +125,59 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 		klog.Infof("%s: %s", r.Name(), desc)
 	}
 
-	if len(newContainers) == 0 {
+	var newReplicas *int32
+	var currentReplicas int32 = 1
+	if ctx.Scale != nil {
+		currentReplicas = ctx.Scale.Spec.Replicas
+	}
+	replicaDesc := ""
+	if r.enableReplicaRightsizing && currentReplicas > r.minReplicas {
+		needed := r.computeNeededReplicas(ctx, currentReplicas)
+		if needed >= r.minReplicas && needed < currentReplicas {
+			n := needed
+			newReplicas = &n
+			replicaDesc = fmt.Sprintf("consolidate replicas %d -> %d", currentReplicas, needed)
+			klog.Infof("%s: %s/%s %s (target %.2f cores/replica)",
+				r.Name(), ctx.Recommendation.Spec.TargetRef.Namespace,
+				ctx.Recommendation.Spec.TargetRef.Name, replicaDesc, r.replicaTargetCores)
+		}
+	}
+
+	if len(newContainers) == 0 && newReplicas == nil {
 		ctx.Recommendation.Status.Action = "None"
-		ctx.Recommendation.Status.Description = "No containers require right-sizing"
+		ctx.Recommendation.Status.Description = "No right-sizing needed: resources and replica count already fit the load"
 		return nil
 	}
 
 	ctx.Recommendation.Status.Action = "Patch"
-	ctx.Recommendation.Status.Description = strings.Join(descriptions, "; ")
+	allDesc := descriptions
+	if replicaDesc != "" {
+		allDesc = append([]string{replicaDesc}, allDesc...)
+	}
+	ctx.Recommendation.Status.Description = strings.Join(allDesc, "; ")
 
 	var newPatch PatchResource
-	newPatch.Spec.Template.Spec.Containers = newContainers
+	newPatch.Spec.Replicas = newReplicas
+	if len(newContainers) > 0 {
+		newPatch.Spec.Template = &PatchResourcePodTemplateSpec{
+			Spec: PatchResourcePodSpec{Containers: newContainers},
+		}
+	}
 	newPatchBytes, err := json.Marshal(newPatch)
 	if err != nil {
 		return fmt.Errorf("failed to encode recommended manifest: %v", err)
 	}
 
 	var oldPatch PatchResource
-	oldPatch.Spec.Template.Spec.Containers = oldContainers
+	if newReplicas != nil {
+		cur := currentReplicas
+		oldPatch.Spec.Replicas = &cur
+	}
+	if len(oldContainers) > 0 {
+		oldPatch.Spec.Template = &PatchResourcePodTemplateSpec{
+			Spec: PatchResourcePodSpec{Containers: oldContainers},
+		}
+	}
 	oldPatchBytes, err := json.Marshal(oldPatch)
 	if err != nil {
 		return fmt.Errorf("failed to encode current manifest: %v", err)
@@ -151,6 +187,26 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 	ctx.Recommendation.Status.CurrentInfo = string(oldPatchBytes)
 
 	return nil
+}
+
+func (r *CarbonRightSizingRecommender) computeNeededReplicas(ctx *framework.RecommendationContext, currentReplicas int32) int32 {
+	cpuUsageList := ctx.InputValue(keyCPUUsage)
+	if len(cpuUsageList) == 0 || r.replicaTargetCores <= 0 {
+		return currentReplicas
+	}
+
+	aggregateCores := r.computePercentile(cpuUsageList, r.cpuPercentile)
+	if aggregateCores <= 0 {
+		return currentReplicas
+	}
+	needed := int32(math.Ceil(aggregateCores / r.replicaTargetCores))
+	if needed < r.minReplicas {
+		needed = r.minReplicas
+	}
+	if needed > currentReplicas {
+		needed = currentReplicas
+	}
+	return needed
 }
 
 func (r *CarbonRightSizingRecommender) getEfficiencyForPod(efficiencyList []*common.TimeSeries) float64 {

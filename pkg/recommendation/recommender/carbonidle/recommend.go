@@ -37,51 +37,40 @@ func (r *CarbonIdleResourceRecommender) recommendWorkload(ctx *framework.Recomme
 		return nil
 	}
 
-	podWattsList := ctx.InputValue(keyPodCPUWatts)
-	if len(podWattsList) == 0 {
-		return fmt.Errorf("no pod energy data available for idle classification")
+	cpuCoresList := ctx.InputValue(keyPodCPUCores)
+	netBytesList := ctx.InputValue(keyPodNetBytes)
+	if len(cpuCoresList) == 0 {
+		return fmt.Errorf("no CPU activity data available for idle classification")
 	}
 
 	var idleDescriptions []string
 
-	for _, ts := range podWattsList {
-		podName := labelValue(ts, "pod_name", common.LabelNamePodName)
-		podNS := labelValue(ts, "container_namespace", "")
+	for _, ts := range cpuCoresList {
+		podName := labelValue(ts, "pod", "")
 		if podName == "" {
 			continue
 		}
-		avgPower := avgSamples(ts.Samples)
-		cpuUtil := r.cpuUtilForPod(podName, ctx)
+		avgCores := avgSamples(ts.Samples)
+		avgNet := r.netForPod(podName, netBytesList)
 
-		idleFrac := fractionBelow(ts.Samples, r.minEnergyWatts)
+		idleFrac := fractionBelow(ts.Samples, r.cpuCoresThreshold)
 
-		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold && idleFrac >= r.sustainedIdleFraction {
-			desc := fmt.Sprintf("Pod %s/%s idle: avg power %.4fW < %.4fW, CPU util %.2f%% < %.2f%%, idle for %.0f%% of window (>= %.0f%%)",
-				podNS, podName, avgPower, r.minEnergyWatts, cpuUtil*100, r.cpuUsageThreshold*100,
-				idleFrac*100, r.sustainedIdleFraction*100)
+		cpuIdle := avgCores < r.cpuCoresThreshold
+		netIdle := avgNet < r.netBytesThreshold
+
+		if cpuIdle && netIdle && idleFrac >= r.sustainedIdleFraction {
+			avgPower := r.avgPowerForPod(podName, ctx.InputValue(keyPodCPUWatts))
+			desc := fmt.Sprintf("Pod %s idle: CPU %.4f cores < %.4f, network %.0f B/s < %.0f B/s, idle for %.0f%% of window (>= %.0f%%); reclaimable power %.3fW",
+				podName, avgCores, r.cpuCoresThreshold, avgNet, r.netBytesThreshold,
+				idleFrac*100, r.sustainedIdleFraction*100, avgPower)
 			idleDescriptions = append(idleDescriptions, desc)
 			klog.Infof("%s: %s", r.Name(), desc)
-		} else if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
-			klog.Infof("%s: Pod %s/%s low-power on average but only idle %.0f%% of window (< %.0f%% required) — not flagged",
-				r.Name(), podNS, podName, idleFrac*100, r.sustainedIdleFraction*100)
-		}
-	}
-
-	containerWattsList := ctx.InputValue(keyContainerCPUWatts)
-	for _, ts := range containerWattsList {
-		podName := labelValue(ts, "pod_name", common.LabelNamePodName)
-		podNS := labelValue(ts, "container_namespace", "")
-		cName := labelValue(ts, "container_name", common.LabelNameContainerName)
-		if podName == "" || cName == "" {
-			continue
-		}
-		avgPower := avgSamples(ts.Samples)
-		cpuUtil := r.cpuUtilForPod(podName, ctx)
-
-		if avgPower < r.minEnergyWatts && cpuUtil < r.cpuUsageThreshold {
-			desc := fmt.Sprintf("Container %s/%s/%s idle: avg power %.4fW < %.4fW, CPU util %.2f%% < %.2f%%",
-				podNS, podName, cName, avgPower, r.minEnergyWatts, cpuUtil*100, r.cpuUsageThreshold*100)
-			idleDescriptions = append(idleDescriptions, desc)
+		} else if cpuIdle && netIdle {
+			klog.Infof("%s: Pod %s idle on average but only %.0f%% of window (< %.0f%% required) — not flagged",
+				r.Name(), podName, idleFrac*100, r.sustainedIdleFraction*100)
+		} else {
+			klog.V(4).Infof("%s: Pod %s active (cpu=%.4f cores, net=%.0f B/s) — not idle",
+				r.Name(), podName, avgCores, avgNet)
 		}
 	}
 
@@ -96,10 +85,11 @@ func (r *CarbonIdleResourceRecommender) recommendWorkload(ctx *framework.Recomme
 }
 
 func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.RecommendationContext) error {
-	podWattsList := ctx.InputValue(keyPodCPUWatts)
-	if len(podWattsList) == 0 {
-		return fmt.Errorf("no pod energy data available for node %s", ctx.Recommendation.Spec.TargetRef.Name)
+	cpuCoresList := ctx.InputValue(keyPodCPUCores)
+	if len(cpuCoresList) == 0 {
+		return fmt.Errorf("no CPU activity data available for node %s", ctx.Recommendation.Spec.TargetRef.Name)
 	}
+	netBytesList := ctx.InputValue(keyPodNetBytes)
 
 	daemonSetPods := make(map[string]bool)
 	for i := range ctx.Pods {
@@ -110,15 +100,15 @@ func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.Recommendat
 
 	var activePods []string
 	var idleCount int
-	for _, ts := range podWattsList {
-		podName := labelValue(ts, "pod_name", common.LabelNamePodName)
+	for _, ts := range cpuCoresList {
+		podName := labelValue(ts, "pod", "")
 		if podName == "" || daemonSetPods[podName] {
 			continue
 		}
-		avgPower := avgSamples(ts.Samples)
-		cpuUtil := r.cpuUtilForPod(podName, ctx)
-		idleFrac := fractionBelow(ts.Samples, r.minEnergyWatts)
-		if avgPower >= r.minEnergyWatts || cpuUtil >= r.cpuUsageThreshold || idleFrac < r.sustainedIdleFraction {
+		avgCores := avgSamples(ts.Samples)
+		avgNet := r.netForPod(podName, netBytesList)
+		idleFrac := fractionBelow(ts.Samples, r.cpuCoresThreshold)
+		if avgCores >= r.cpuCoresThreshold || avgNet >= r.netBytesThreshold || idleFrac < r.sustainedIdleFraction {
 			activePods = append(activePods, podName)
 		} else {
 			idleCount++
@@ -132,8 +122,8 @@ func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.Recommendat
 
 	ctx.Recommendation.Status.Action = "Delete"
 	ctx.Recommendation.Status.Description = fmt.Sprintf(
-		"Node %s idle: all %d non-DaemonSet pod(s) are energy-idle (< %.4fW, CPU < %.2f%%)",
-		ctx.Recommendation.Spec.TargetRef.Name, idleCount, r.minEnergyWatts, r.cpuUsageThreshold*100)
+		"Node %s idle: all %d non-DaemonSet pod(s) are idle (CPU < %.4f cores, network < %.0f B/s)",
+		ctx.Recommendation.Spec.TargetRef.Name, idleCount, r.cpuCoresThreshold, r.netBytesThreshold)
 	return nil
 }
 
@@ -188,6 +178,15 @@ func (r *CarbonIdleResourceRecommender) cpuUtilForPod(podName string, ctx *frame
 		return 0
 	}
 	return r.cpuUsageThreshold 
+}
+
+func (r *CarbonIdleResourceRecommender) netForPod(podName string, netList []*common.TimeSeries) float64 {
+	for _, ts := range netList {
+		if labelValue(ts, "pod", "") == podName {
+			return avgSamples(ts.Samples)
+		}
+	}
+	return 0
 }
 
 func avgSamples(samples []common.Sample) float64 {

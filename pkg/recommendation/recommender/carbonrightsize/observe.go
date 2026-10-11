@@ -43,6 +43,9 @@ func (r *CarbonRightSizingRecommender) countRightSizedContainers(ctx *framework.
 		return 0
 	}
 
+	if patch.Spec.Template == nil {
+		return 0
+	}
 	return len(patch.Spec.Template.Spec.Containers)
 }
 

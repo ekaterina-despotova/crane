@@ -87,12 +87,8 @@
                 </div>
                 <div style="display:grid;gap:16px;margin-bottom:20px;">
                     <div style="background:#fff;border-radius:12px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
-                        <iframe src="/grafana/d-solo/kepler-carbon/kepler-carbon-emissions?orgId=1&panelId=1&theme=light&from=now-1h&to=now&refresh=30s" 
-                            style="width:100%;height:300px;border:none;border-radius:8px;"></iframe>
-                    </div>
-                    <div style="background:#fff;border-radius:12px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
-                        <iframe src="/grafana/d-solo/kepler-carbon/kepler-carbon-emissions?orgId=1&panelId=5&theme=light&from=now-1h&to=now&refresh=30s" 
-                            style="width:100%;height:300px;border:none;border-radius:8px;"></iframe>
+                        <iframe src="/grafana/d-solo/kepler-carbon/kepler-carbon-emissions?orgId=1&panelId=6&theme=light&from=now-1h&to=now&refresh=30s" 
+                            style="width:100%;height:320px;border:none;border-radius:8px;"></iframe>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
                         <div style="background:#fff;border-radius:12px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
@@ -201,14 +197,16 @@
             let totalJoules = 0;
             let rows = '';
             const podMap = {};
+            const nsSet = new Set();
 
             results.forEach(r => {
                 const pod = r.metric.pod_name || 'unknown';
                 const ns = r.metric.container_namespace || 'unknown';
-                const source = r.metric.source || 'unknown';
+                const source = r.metric.source || 'RAPL (sysfs)';
                 const values = r.values || [];
                 const lastVal = values.length > 0 ? parseFloat(values[values.length-1][1]) : 0;
-                
+
+                nsSet.add(ns);
                 const key = `${ns}/${pod}`;
                 if (!podMap[key]) podMap[key] = { pod, ns, source, joules: 0 };
                 podMap[key].joules += lastVal;
@@ -219,12 +217,11 @@
                 rows += `<tr><td>${p.pod}</td><td>${p.ns}</td><td>${p.joules.toFixed(2)} J</td><td>${p.source}</td></tr>`;
             });
 
-            const podCount = Object.keys(podMap).length;
             document.getElementById('emission-cards').innerHTML = `
-                <div class="card"><div class="card-label">Pods Monitored</div><div class="card-value">${podCount}</div></div>
+                <div class="card"><div class="card-label">Namespaces Monitored</div><div class="card-value">${nsSet.size}</div></div>
                 <div class="card"><div class="card-label">Total Energy (cumulative)</div><div class="card-value green">${(totalJoules/1000).toFixed(1)} kJ</div></div>
-                <div class="card"><div class="card-label">Data Source</div><div class="card-value">Kepler eBPF</div></div>
-                <div class="card"><div class="card-label">Region</div><div class="card-value">Sweden Central</div></div>
+                <div class="card"><div class="card-label">Data Source</div><div class="card-value">Kepler + RAPL</div></div>
+                <div class="card"><div class="card-label">Region</div><div class="card-value">BG</div></div>
             `;
             document.getElementById('energy-table-body').innerHTML = rows || '<tr><td colspan="4">No data yet — Kepler needs a few minutes to collect</td></tr>';
 

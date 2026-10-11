@@ -42,15 +42,14 @@ data:
       ## Carbon recommenders (Kepler-powered)
       - name: CarbonIdleResource
         config:
-          energy-idle-threshold: "0.8"
           observation-window-days: "7"
-          min-energy-watts: "0.5"
-          cpu-usage-threshold: "0.05"
+          cpu-cores-threshold: "0.075"   
+          network-bytes-threshold: "1000" 
           ## Guard rails — only affect CarbonIdle (never scale-to-zero these)
           # workload must be idle for >= this fraction of the observation window
           sustained-idle-fraction: "0.95"
           # infra namespaces are never deleted (they run the system); still get right-sizing
-          protected-namespaces: "kube-system,crane-system,monitoring,kepler"
+          protected-namespaces: "kube-system,crane-system,monitoring,kepler,loadgen"
           # individual workloads carrying <label>=true are never flagged idle
           protected-label: "carbon.crane.io/protected"
         acceptedResources:
@@ -70,9 +69,13 @@ data:
           observation-window-days: "7"
           cpu-percentile: "0.95"
           memory-percentile: "0.95"
-          ## Guard rails — never right-size below these floors (avoid starving a container)
           min-cpu-millicores: "10"
           min-memory-mib: "16"
+          enable-replica-rightsizing: "true"
+          replica-target-cores: "0.5"  
+          min-replicas: "1"           
+          protected-label: "carbon.crane.io/protected"
+          protected-namespaces: "kube-system,crane-system,monitoring,kepler,loadgen"
         acceptedResources:
           - kind: Deployment
             apiVersion: apps/v1
@@ -134,7 +137,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v16
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v21
           imagePullPolicy: Always
           env:
             - name: TZ
