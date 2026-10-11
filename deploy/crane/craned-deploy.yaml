@@ -104,8 +104,8 @@ data:
             apiVersion: batch/v1
       - name: CarbonSpatialShifting
         config:
-          current-zone: "BG"
-          comparison-zones: "NO,FI,DK,DE,PL,FR,GB,SE"
+          current-zone: "SE"
+          comparison-zones: "NO,FI,DK,DE,PL,FR,GB,BG"
           observation-window-days: "7"
           min-energy-watts: "0.01"
         acceptedResources:
@@ -153,7 +153,7 @@ spec:
                   key: api-key
                   optional: true
             - name: ELECTRICITY_MAPS_ZONE
-              value: "BG"
+              value: "SE"
           command:
             - /craned
             - --prometheus-address=http://prometheus-kube-prometheus-prometheus.monitoring:9090
