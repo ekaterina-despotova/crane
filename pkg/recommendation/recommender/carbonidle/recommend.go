@@ -85,6 +85,31 @@ func (r *CarbonIdleResourceRecommender) recommendWorkload(ctx *framework.Recomme
 }
 
 func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.RecommendationContext) error {
+	if r.enableConsolidation {
+		decision, err := r.evaluateConsolidation(ctx)
+		if err != nil {
+			klog.Warningf("%s: consolidation analysis failed for node %s: %v — falling back to idle check",
+				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, err)
+		} else if decision.Feasible {
+			ctx.Recommendation.Status.Action = "Delete"
+			ctx.Recommendation.Status.Description = decision.Reason
+			if decision.FreedNodeWatts > 0 {
+				ctx.Recommendation.Status.Description += fmt.Sprintf(
+					"; freeing this node reclaims ~%.2fW of measured node power", decision.FreedNodeWatts)
+			}
+
+			if infoBytes, mErr := json.Marshal(decision); mErr == nil {
+				ctx.Recommendation.Status.RecommendedValue = string(infoBytes)
+			}
+			klog.Infof("%s: node %s is a consolidation candidate: %s",
+				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
+			return nil
+		} else {
+			klog.Infof("%s: node %s not a consolidation candidate: %s",
+				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
+		}
+	}
+
 	cpuCoresList := ctx.InputValue(keyPodCPUCores)
 	if len(cpuCoresList) == 0 {
 		return fmt.Errorf("no CPU activity data available for node %s", ctx.Recommendation.Spec.TargetRef.Name)

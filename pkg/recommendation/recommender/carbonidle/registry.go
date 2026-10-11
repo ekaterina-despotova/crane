@@ -25,6 +25,10 @@ type CarbonIdleResourceRecommender struct {
 	sustainedIdleFraction float64
 	protectedLabel        string
 	protectedNamespaces   []string
+
+	enableConsolidation bool
+	headroomFraction    float64
+	minNodes            int64
 }
 
 func init() {
@@ -73,6 +77,21 @@ func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule a
 		return nil, err
 	}
 
+	enableConsolidation, err := rec.GetConfigBool("enable-consolidation", true)
+	if err != nil {
+		return nil, err
+	}
+
+	headroomFraction, err := rec.GetConfigFloat("headroom-fraction", defaultHeadroomFraction)
+	if err != nil {
+		return nil, err
+	}
+
+	minNodes, err := rec.GetConfigInt("min-nodes", 1)
+	if err != nil {
+		return nil, err
+	}
+
 	protectedLabel := rec.GetConfigString("protected-label", "carbon.crane.io/protected")
 
 	var protectedNamespaces []string
@@ -95,5 +114,8 @@ func NewCarbonIdleResourceRecommender(rec apis.Recommender, recommendationRule a
 		sustainedIdleFraction: sustainedIdleFraction,
 		protectedLabel:        protectedLabel,
 		protectedNamespaces:   protectedNamespaces,
+		enableConsolidation:   enableConsolidation,
+		headroomFraction:      headroomFraction,
+		minNodes:              minNodes,
 	}, nil
 }

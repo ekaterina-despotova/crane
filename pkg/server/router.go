@@ -48,6 +48,7 @@ func (s *apiServer) initRouter() {
 		{
 			recommendv1.GET("", recommendationHandler.ListRecommendations)
 			recommendv1.POST("/adopt/:namespace/:recommendationName", recommendationHandler.AdoptRecommendation)
+			recommendv1.POST("/drain-node/:namespace/:recommendationName", recommendationHandler.DrainNode)
 		}
 
 		// recommendationRules

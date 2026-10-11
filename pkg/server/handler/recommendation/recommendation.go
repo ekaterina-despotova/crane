@@ -10,6 +10,7 @@ import (
 	patchtypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	analysisapi "github.com/gocrane/api/analysis/v1alpha1"
@@ -24,16 +25,19 @@ type Handler struct {
 	client          client.Client
 	dynamicClient   dynamic.Interface
 	discoveryClient discovery.DiscoveryInterface
+	clientset       kubernetes.Interface
 }
 
 func NewRecommendationHandler(config *config.Config) *Handler {
 	dynamicClient := dynamic.NewForConfigOrDie(config.KubeConfig)
 	discoveryClient := discovery.NewDiscoveryClientForConfigOrDie(config.KubeConfig)
+	clientset := kubernetes.NewForConfigOrDie(config.KubeConfig)
 
 	return &Handler{
 		client:          config.Client,
 		dynamicClient:   dynamicClient,
 		discoveryClient: discoveryClient,
+		clientset:       clientset,
 	}
 }
 

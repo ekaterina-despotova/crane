@@ -45,13 +45,12 @@ data:
           observation-window-days: "7"
           cpu-cores-threshold: "0.075"   
           network-bytes-threshold: "1000" 
-          ## Guard rails — only affect CarbonIdle (never scale-to-zero these)
-          # workload must be idle for >= this fraction of the observation window
           sustained-idle-fraction: "0.95"
-          # infra namespaces are never deleted (they run the system); still get right-sizing
           protected-namespaces: "kube-system,crane-system,monitoring,kepler,loadgen"
-          # individual workloads carrying <label>=true are never flagged idle
           protected-label: "carbon.crane.io/protected"
+          enable-consolidation: "true"
+          headroom-fraction: "0.15"
+          min-nodes: "1"
         acceptedResources:
           - kind: Deployment
             apiVersion: apps/v1
@@ -137,7 +136,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v21
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v22
           imagePullPolicy: Always
           env:
             - name: TZ

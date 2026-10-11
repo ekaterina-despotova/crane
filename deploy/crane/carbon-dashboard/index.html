@@ -181,6 +181,35 @@
         if (page === 'recommendations') loadRecommendations();
     }
 
+    const ZONE_NAMES = {
+        SE: 'Sweden Central',
+        BG: 'Bulgaria',
+        NO: 'Norway', FI: 'Finland', DK: 'Denmark',
+        DE: 'Germany', PL: 'Poland', FR: 'France', GB: 'Great Britain',
+    };
+
+    let _regionCache = null;
+    async function detectRegion() {
+        if (_regionCache) return _regionCache;
+        let zone = null;
+        try {
+            const resp = await fetch(CRANED_URL + '/recommendation');
+            const data = await resp.json();
+            const items = data.data?.items || [];
+            for (const r of items) {
+                if (r.spec?.type !== 'CarbonSpatialShifting') continue;
+                const info = r.status?.recommendedInfo || r.status?.currentInfo;
+                if (!info) continue;
+                try {
+                    const parsed = JSON.parse(info);
+                    if (parsed.currentZone) { zone = parsed.currentZone; break; }
+                } catch {}
+            }
+        } catch {}
+        _regionCache = zone ? (ZONE_NAMES[zone] || zone) : '—';
+        return _regionCache;
+    }
+
     async function loadEmissions() {
         try {
             const now = Math.floor(Date.now() / 1000);
@@ -217,11 +246,13 @@
                 rows += `<tr><td>${p.pod}</td><td>${p.ns}</td><td>${p.joules.toFixed(2)} J</td><td>${p.source}</td></tr>`;
             });
 
+            const region = await detectRegion();
+
             document.getElementById('emission-cards').innerHTML = `
                 <div class="card"><div class="card-label">Namespaces Monitored</div><div class="card-value">${nsSet.size}</div></div>
                 <div class="card"><div class="card-label">Total Energy (cumulative)</div><div class="card-value green">${(totalJoules/1000).toFixed(1)} kJ</div></div>
-                <div class="card"><div class="card-label">Data Source</div><div class="card-value">Kepler + RAPL</div></div>
-                <div class="card"><div class="card-label">Region</div><div class="card-value">BG</div></div>
+                <div class="card"><div class="card-label">Data Source</div><div class="card-value" style="font-size:20px;">Kepler</div></div>
+                <div class="card"><div class="card-label">Region</div><div class="card-value" style="font-size:20px;">${region}</div></div>
             `;
             document.getElementById('energy-table-body').innerHTML = rows || '<tr><td colspan="4">No data yet — Kepler needs a few minutes to collect</td></tr>';
 
@@ -413,6 +444,50 @@
                 document.getElementById('modal-patch').textContent = patch;
             }
 
+        } else if (type === 'CarbonIdleResource' && targetRef?.kind === 'Node') {
+            document.getElementById('modal-title').textContent = 'Node Consolidation — Drain & Power Off';
+            document.getElementById('modal-patch').style.display = 'none';
+            let d = null;
+            try { d = JSON.parse(currentApplyRec.status?.recommendedValue || ''); } catch { d = null; }
+
+            if (d) {
+                const cpu = m => `${m}m`;
+                const mem = b => fmtBytes(b);
+                const pct = (d.headroomFraction * 100).toFixed(0);
+                document.getElementById('modal-status').innerHTML = `
+                    <div class="status-msg status-success" style="margin-top:0;font-size:14px;line-height:1.7;">
+                        <div style="font-size:16px;font-weight:700;margin-bottom:10px;">
+                            ${d.feasible ? 'Draining' : 'Cannot drain'} <strong>${d.candidateNode}</strong>
+                        </div>
+                        <div style="color:#555;margin-bottom:12px;">${d.reason}</div>
+                        <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px;">Headroom math (${pct}% reserve)</div>
+                        <table style="width:100%;font-size:13px;border-collapse:collapse;">
+                            <tr><td style="padding:4px 0;color:#666;">Must move off node</td>
+                                <td style="text-align:right;font-weight:600;">${cpu(d.moveCpuMilli)} CPU · ${mem(d.moveMemBytes)}</td></tr>
+                            <tr><td style="padding:4px 0;color:#666;">Survivors (${d.survivorNodes} node${d.survivorNodes===1?'':'s'}) allocatable</td>
+                                <td style="text-align:right;font-weight:600;">${cpu(d.remainingAllocatableCpuMilli)} CPU · ${mem(d.remainingAllocatableMemBytes)}</td></tr>
+                            <tr><td style="padding:4px 0;color:#666;">Already requested on survivors</td>
+                                <td style="text-align:right;font-weight:600;">${cpu(d.remainingRequestedCpuMilli)} CPU · ${mem(d.remainingRequestedMemBytes)}</td></tr>
+                            <tr><td style="padding:4px 0;color:#666;">Usable after ${pct}% headroom</td>
+                                <td style="text-align:right;font-weight:600;">${cpu(d.usableCpuMilli)} CPU · ${mem(d.usableMemBytes)}</td></tr>
+                            <tr style="border-top:1px solid #cfe8d4;">
+                                <td style="padding:6px 0;color:#333;font-weight:700;">Projected after move</td>
+                                <td style="text-align:right;font-weight:700;color:${d.feasible?'#27ae60':'#e74c3c'};">${cpu(d.projectedCpuMilli)} CPU · ${mem(d.projectedMemBytes)}</td></tr>
+                        </table>
+                        ${d.freedNodeWatts > 0 ? `
+                        <div style="margin-top:12px;background:#fff;border-radius:6px;padding:8px;display:inline-block;">
+                            <span style="font-size:11px;color:#888;text-transform:uppercase;">Est. power freed</span>
+                            <span style="font-size:16px;font-weight:700;color:#27ae60;margin-left:8px;">~${d.freedNodeWatts.toFixed(2)} W</span>
+                        </div>` : ''}
+                        <div style="margin-top:10px;font-size:12px;color:#888;">Applying will cordon the node, drain its pods onto the survivors, then delete the underlying VMSS instance (powering the VM off).</div>
+                    </div>`;
+                document.getElementById('btn-do-apply').textContent = 'Drain & Power Off';
+            } else {
+                document.getElementById('modal-patch').style.display = '';
+                try { document.getElementById('modal-patch').textContent = JSON.stringify(JSON.parse(patch), null, 2); }
+                catch { document.getElementById('modal-patch').textContent = patch || 'No patch available'; }
+            }
+
         } else {
             document.getElementById('modal-title').textContent = 'Apply Recommendation';
             document.getElementById('modal-patch').style.display = '';
@@ -424,6 +499,14 @@
         }
 
         document.getElementById('apply-modal').classList.add('show');
+    }
+
+    function fmtBytes(b) {
+        if (b === 0 || b == null) return '0';
+        const units = ['', 'Ki', 'Mi', 'Gi', 'Ti'];
+        let i = 0, v = b;
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+        return (i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)) + units[i];
     }
 
     function closeModal() {
@@ -442,29 +525,78 @@
 
         const target = currentApplyRec.spec.targetRef;
         const action = currentApplyRec.status?.action;
+        const type = currentApplyRec.spec.type;
         const recName = currentApplyRec.metadata.name;
         const recNs = currentApplyRec.metadata.namespace;
 
-        try {
-            const resp = await fetch(`${CRANED_URL}/recommendation/adopt/${recNs}/${recName}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            const data = await resp.json();
+        const isNodeConsolidation = (type === 'CarbonIdleResource' && target?.kind === 'Node');
 
-            if (!data.error) {
-                const actionWord = action === 'Delete' ? 'Deletion' : 'Change';
-                document.getElementById('modal-status').innerHTML = `
-                    <div class="status-msg status-success">${actionWord} of <strong>${target.kind}/${target.name}</strong> in namespace <strong>${target.namespace}</strong> successfully applied.</div>`;
-                btn.textContent = 'Done';
-                btn.onclick = closeModal;
-                appliedSet.add(recName);
-                localStorage.setItem('appliedRecs', JSON.stringify([...appliedSet]));
-                filterRecommendations();
+        try {
+            if (isNodeConsolidation) {
+                btn.textContent = 'Cordoning & draining…';
+                const resp = await fetch(`${CRANED_URL}/recommendation/drain-node/${recNs}/${recName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await resp.json();
+                const r = data.data || {};
+
+                if (!data.error) {
+                    const evicted = (r.drain?.evictedPods || []).length;
+                    const skipped = (r.drain?.skippedPods || []).length;
+                    const remaining = (r.drain?.remainingPods || []).length;
+                    const inst = r.instance || {};
+
+                    if (remaining > 0) {
+                        document.getElementById('modal-status').innerHTML = `
+                            <div class="status-msg status-error" style="line-height:1.6;">
+                                <strong>Partially drained — VM not deleted.</strong><br>
+                                Node <strong>${r.node}</strong> was cordoned and ${evicted} pod(s) evicted, but
+                                ${remaining} pod(s) could not be evicted (likely a PodDisruptionBudget).<br>
+                                The node stays cordoned (safe, reversible). Resolve the blocker and retry.
+                            </div>`;
+                        btn.textContent = 'Retry';
+                    } else {
+                        document.getElementById('modal-status').innerHTML = `
+                            <div class="status-msg status-success" style="line-height:1.7;">
+                                <div style="font-weight:700;margin-bottom:6px;">✅ Node ${r.node} is being powered off</div>
+                                <div>• Cordoned${r.cordoned ? ' ✓' : ''}</div>
+                                <div>• Drained: ${evicted} pod(s) evicted${skipped ? `, ${skipped} skipped (DaemonSet/mirror)` : ''}</div>
+                                <div>• VMSS instance <strong>${inst.instanceId}</strong> of <strong>${inst.vmss}</strong> scheduled for deletion</div>
+                                <div>• Delete Job: <code>${r.jobName || '-'}</code></div>
+                            </div>`;
+                        btn.textContent = 'Done';
+                        btn.onclick = closeModal;
+                        appliedSet.add(recName);
+                        localStorage.setItem('appliedRecs', JSON.stringify([...appliedSet]));
+                        filterRecommendations();
+                    }
+                } else {
+                    document.getElementById('modal-status').innerHTML = `
+                        <div class="status-msg status-error">Failed: ${data.error}</div>`;
+                    btn.textContent = 'Retry';
+                }
             } else {
-                document.getElementById('modal-status').innerHTML = `
-                    <div class="status-msg status-error">Failed: ${data.error}</div>`;
-                btn.textContent = 'Retry';
+                const resp = await fetch(`${CRANED_URL}/recommendation/adopt/${recNs}/${recName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await resp.json();
+
+                if (!data.error) {
+                    const actionWord = action === 'Delete' ? 'Deletion' : 'Change';
+                    document.getElementById('modal-status').innerHTML = `
+                        <div class="status-msg status-success">${actionWord} of <strong>${target.kind}/${target.name}</strong> in namespace <strong>${target.namespace}</strong> successfully applied.</div>`;
+                    btn.textContent = 'Done';
+                    btn.onclick = closeModal;
+                    appliedSet.add(recName);
+                    localStorage.setItem('appliedRecs', JSON.stringify([...appliedSet]));
+                    filterRecommendations();
+                } else {
+                    document.getElementById('modal-status').innerHTML = `
+                        <div class="status-msg status-error">Failed: ${data.error}</div>`;
+                    btn.textContent = 'Retry';
+                }
             }
         } catch(e) {
             document.getElementById('modal-status').innerHTML = `
