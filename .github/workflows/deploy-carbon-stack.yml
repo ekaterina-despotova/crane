@@ -227,3 +227,41 @@ jobs:
           kubectl get recommendationrules
           echo ""
           echo "=== Deployment complete ==="
+
+      - name: Show access links (Locust + Crane dashboard)
+        run: |
+          get_ip() {
+            local ns=$1 svc=$2
+            for i in $(seq 1 36); do
+              ip=$(kubectl get svc "$svc" -n "$ns" \
+                    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+              if [ -n "$ip" ]; then echo "$ip"; return 0; fi
+              sleep 5
+            done
+            echo ""   # timed out
+          }
+
+          CRANE_IP=$(get_ip crane-system crane-dashboard)
+          LOCUST_IP=$(get_ip loadgen locust-web)
+
+          echo ""
+          echo "========================================================"
+          echo "  ACCESS LINKS"
+          echo "========================================================"
+          if [ -n "$CRANE_IP" ]; then
+            echo "  Crane Carbon Dashboard : http://${CRANE_IP}/carbon/"
+          else
+            echo "  Crane Carbon Dashboard : (external IP not ready yet — check: kubectl get svc crane-dashboard -n crane-system)"
+          fi
+          if [ -n "$LOCUST_IP" ]; then
+            echo "  Locust Load Generator  : http://${LOCUST_IP}:8089"
+          else
+            echo "  Locust Load Generator  : (external IP not ready yet — check: kubectl get svc locust-web -n loadgen)"
+          fi
+          echo "========================================================"
+          {
+            echo "### Access links"
+            echo ""
+            if [ -n "$CRANE_IP" ]; then echo "- **Crane Carbon Dashboard**: http://${CRANE_IP}/carbon/"; fi
+            if [ -n "$LOCUST_IP" ]; then echo "- **Locust Load Generator**: http://${LOCUST_IP}:8089"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
