@@ -3,9 +3,13 @@ package recommendation
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
@@ -16,17 +20,51 @@ import (
 	"github.com/gocrane/crane/pkg/server/ginwrapper"
 )
 
-
 const drainNodeMinSurvivors = 1
 
+const (
+	phaseCordoning = "cordoning"
+	phaseDraining  = "draining"
+	phaseDeleting  = "deleting"
+	phaseCompleted = "completed"
+	phaseFailed    = "failed"
+)
 
-type drainNodeResponse struct {
-	Node     string          `json:"node"`
-	Cordoned bool            `json:"cordoned"`
-	Drain    *drainResult    `json:"drain"`
-	Instance *instanceInfo   `json:"instance"`
-	JobName  string          `json:"jobName"`
-	Message  string          `json:"message"`
+type drainJob struct {
+	Node     string        `json:"node"`
+	Phase    string        `json:"phase"`
+	Message  string        `json:"message"`
+	JobName  string        `json:"jobName"`
+	Instance *instanceInfo `json:"instance"`
+	Drain    *drainResult  `json:"drain,omitempty"`
+	Started  time.Time     `json:"started"`
+}
+
+type drainTracker struct {
+	mu   sync.RWMutex
+	jobs map[string]*drainJob
+}
+
+var tracker = &drainTracker{jobs: make(map[string]*drainJob)}
+
+func (t *drainTracker) set(j *drainJob) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.jobs[j.Node] = j
+}
+
+func (t *drainTracker) update(node string, fn func(*drainJob)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if j, ok := t.jobs[node]; ok {
+		fn(j)
+	}
+}
+
+func (t *drainTracker) get(node string) *drainJob {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.jobs[node]
 }
 
 type instanceInfo struct {
@@ -35,10 +73,8 @@ type instanceInfo struct {
 	RG         string `json:"resourceGroup"`
 }
 
-
 func (h *Handler) DrainNode(c *gin.Context) {
 	ctx := context.TODO()
-
 
 	rec := &analysisapi.Recommendation{}
 	if err := h.client.Get(ctx, types.NamespacedName{
@@ -86,51 +122,146 @@ func (h *Handler) DrainNode(c *gin.Context) {
 		return
 	}
 
-	resp := &drainNodeResponse{
-		Node: nodeName,
+	if existing := tracker.get(nodeName); existing != nil &&
+		existing.Phase != phaseCompleted && existing.Phase != phaseFailed {
+		ginwrapper.WriteResponse(c, nil, existing)
+		return
+	}
+
+	job := &drainJob{
+		Node:    nodeName,
+		Phase:   phaseCordoning,
+		Message: "starting drain",
+		Started: time.Now(),
 		Instance: &instanceInfo{
 			VMSS:       inst.VMSSName,
 			InstanceID: inst.InstanceID,
 			RG:         inst.ResourceGroup,
 		},
 	}
+	tracker.set(job)
 
+	go h.runDrain(context.Background(), nodeName, inst)
 
+	c.JSON(202, gin.H{"data": job, "error": ""})
+}
+
+func (h *Handler) runDrain(ctx context.Context, nodeName string, inst *providerid.AzureVMSSInstance) {
+	tracker.update(nodeName, func(j *drainJob) { j.Phase = phaseCordoning; j.Message = "cordoning node" })
 	if err := cordonNode(ctx, h.clientset, nodeName); err != nil {
-		ginwrapper.WriteResponse(c, err, nil)
+		tracker.update(nodeName, func(j *drainJob) {
+			j.Phase = phaseFailed
+			j.Message = "cordon failed: " + err.Error()
+		})
+		klog.Errorf("drain-node: cordon failed for %s: %v", nodeName, err)
 		return
 	}
-	resp.Cordoned = true
 
+	tracker.update(nodeName, func(j *drainJob) { j.Phase = phaseDraining; j.Message = "evicting pods" })
 	drain, err := drainNode(ctx, h.clientset, nodeName)
 	if err != nil {
-		ginwrapper.WriteResponse(c, fmt.Errorf("drain failed for node %s: %w", nodeName, err), nil)
+		tracker.update(nodeName, func(j *drainJob) {
+			j.Phase = phaseFailed
+			j.Message = "drain failed: " + err.Error()
+		})
+		klog.Errorf("drain-node: drain failed for %s: %v", nodeName, err)
 		return
 	}
-	resp.Drain = drain
+	tracker.update(nodeName, func(j *drainJob) { j.Drain = drain })
 
 	if len(drain.RemainingPods) > 0 {
-		resp.Message = fmt.Sprintf(
-			"node cordoned and partially drained, but %d pod(s) could not be evicted (likely PodDisruptionBudget); VMSS instance NOT deleted. Resolve and retry.",
+		msg := fmt.Sprintf(
+			"node cordoned and partially drained, but %d pod(s) could not be evicted (likely PodDisruptionBudget); VMSS instance NOT deleted",
 			len(drain.RemainingPods))
-		klog.Warningf("drain-node: %s", resp.Message)
-		ginwrapper.WriteResponse(c, nil, resp)
+		tracker.update(nodeName, func(j *drainJob) { j.Phase = phaseFailed; j.Message = msg })
+		klog.Warningf("drain-node: %s", msg)
 		return
 	}
 
+	tracker.update(nodeName, func(j *drainJob) { j.Phase = phaseDeleting; j.Message = "deleting VMSS instance" })
 	jobName, err := createVMSSDeleteJob(ctx, h.clientset, inst, nodeName)
 	if err != nil {
-		resp.Message = "node drained but failed to launch VMSS delete Job: " + err.Error()
-		ginwrapper.WriteResponse(c, fmt.Errorf(resp.Message), resp)
+		tracker.update(nodeName, func(j *drainJob) {
+			j.Phase = phaseFailed
+			j.Message = "failed to launch VMSS delete Job: " + err.Error()
+		})
+		klog.Errorf("drain-node: %v", err)
 		return
 	}
-	resp.JobName = jobName
-	resp.Message = fmt.Sprintf(
-		"node %s cordoned, drained (%d pods evicted), and VMSS instance %s scheduled for deletion via Job %s",
-		nodeName, len(drain.EvictedPods), inst.InstanceID, jobName)
+	tracker.update(nodeName, func(j *drainJob) {
+		j.JobName = jobName
+		j.Message = fmt.Sprintf("VMSS instance %s deletion in progress (Job %s)", inst.InstanceID, jobName)
+	})
+	klog.Infof("drain-node: node %s drained (%d evicted), delete Job %s running",
+		nodeName, len(drain.EvictedPods), jobName)
+}
 
-	klog.Infof("drain-node: %s", resp.Message)
-	ginwrapper.WriteResponse(c, nil, resp)
+func (h *Handler) DrainNodeStatus(c *gin.Context) {
+	ctx := context.TODO()
+	nodeName := c.Param("nodeName")
+
+	job := tracker.get(nodeName)
+
+	node := &corev1.Node{}
+	nodeErr := h.client.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+	nodeGone := apierrors.IsNotFound(nodeErr)
+
+	if job == nil {
+		if nodeGone {
+			ginwrapper.WriteResponse(c, nil, &drainJob{
+				Node: nodeName, Phase: phaseCompleted,
+				Message: "node no longer exists in the cluster",
+			})
+			return
+		}
+		ginwrapper.WriteResponse(c, nil, &drainJob{
+			Node: nodeName, Phase: "unknown",
+			Message: "no drain in progress for this node",
+		})
+		return
+	}
+
+	if job.Phase == phaseDeleting {
+		if nodeGone {
+			tracker.update(nodeName, func(j *drainJob) {
+				j.Phase = phaseCompleted
+				j.Message = "VMSS instance deleted; node removed from cluster"
+			})
+		} else if job.JobName != "" {
+			if done, failed, jerr := h.jobTerminalState(ctx, job.JobName); jerr == nil {
+				if failed {
+					tracker.update(nodeName, func(j *drainJob) {
+						j.Phase = phaseFailed
+						j.Message = "VMSS delete Job failed; check Job logs"
+					})
+				} else if done {
+					tracker.update(nodeName, func(j *drainJob) {
+						j.Phase = phaseCompleted
+						j.Message = "VMSS instance deleted"
+					})
+				}
+			}
+		}
+	}
+
+	ginwrapper.WriteResponse(c, nil, tracker.get(nodeName))
+}
+
+func (h *Handler) jobTerminalState(ctx context.Context, jobName string) (done bool, failed bool, err error) {
+	j, err := h.clientset.BatchV1().Jobs(craneSystemNamespace).Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, false, nil
+		}
+		return false, false, err
+	}
+	if j.Status.Succeeded > 0 {
+		return true, false, nil
+	}
+	if j.Status.Failed > 0 {
+		return false, true, nil
+	}
+	return false, false, nil
 }
 
 func (h *Handler) checkSurvivorFloor(ctx context.Context, nodeName string) error {
@@ -170,4 +301,3 @@ func nodeReady(node *corev1.Node) bool {
 	}
 	return false
 }
-

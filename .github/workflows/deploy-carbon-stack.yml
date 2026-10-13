@@ -175,8 +175,13 @@ jobs:
 
       - name: Create Carbon Dashboard ConfigMap
         run: |
+          ZONE=$(grep -A1 'name: ELECTRICITY_MAPS_ZONE' deploy/crane/craned-deploy.yaml \
+                  | grep 'value:' | head -1 | sed -E 's/.*value:\s*"?([A-Za-z0-9_-]+)"?.*/\1/')
+          ZONE=${ZONE:-SE}
+          echo "Injecting dashboard DEPLOY_ZONE=$ZONE"
+          sed "s/__DEPLOY_ZONE__/${ZONE}/g" deploy/crane/carbon-dashboard/index.html > /tmp/carbon-dashboard.html
           kubectl create configmap crane-carbon-dashboard -n crane-system \
-            --from-file=index.html=deploy/crane/carbon-dashboard/index.html \
+            --from-file=index.html=/tmp/carbon-dashboard.html \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: RBAC for cluster registration

@@ -3,6 +3,10 @@ grafana:
   adminPassword: "crane-grafana"
   service:
     type: ClusterIP
+  persistence:
+    enabled: true
+    storageClassName: managed-csi
+    size: 1Gi
   grafana.ini:
     auth.anonymous:
       enabled: true
@@ -21,6 +25,14 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     serviceMonitorSelector: {}
     podMonitorSelector: {}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: managed-csi
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
     resources:
       requests:
         cpu: 200m

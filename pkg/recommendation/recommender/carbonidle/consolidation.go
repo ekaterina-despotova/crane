@@ -3,6 +3,7 @@ package carbonidle
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -54,6 +55,11 @@ type consolidationDecision struct {
 	ProjectedMemBytes int64 `json:"projectedMemBytes"`
 
 	FreedNodeWatts float64 `json:"freedNodeWatts"`
+
+	IsBestCandidate    bool   `json:"isBestCandidate"`
+	Rank               int    `json:"rank"`
+	BetterCandidate    string `json:"betterCandidate,omitempty"`
+	FeasibleCandidates int    `json:"feasibleCandidates"`
 }
 
 func (r *CarbonIdleResourceRecommender) evaluateConsolidation(ctx *framework.RecommendationContext) (*consolidationDecision, error) {
@@ -133,7 +139,10 @@ func (r *CarbonIdleResourceRecommender) evaluateConsolidation(ctx *framework.Rec
 
 	if cpuFits && memFits {
 		decision.Feasible = true
-		decision.Reason = fmt.Sprintf(
+
+		r.rankCandidate(nodes, candidateName, decision)
+
+		base := fmt.Sprintf(
 			"draining node %s is feasible: the %d survivor node(s) can absorb its %dm CPU / %s of reschedulable requests "+
 				"within a %.0f%% headroom reserve (projected CPU %dm of %dm usable; projected memory %s of %s usable)",
 			candidateName, len(survivors),
@@ -141,6 +150,20 @@ func (r *CarbonIdleResourceRecommender) evaluateConsolidation(ctx *framework.Rec
 			r.headroomFraction*100,
 			projCPU, usableCPU,
 			humanizeBytes(projMem), humanizeBytes(usableMem))
+
+		if decision.IsBestCandidate {
+			if decision.FeasibleCandidates > 1 {
+				decision.Reason = base + fmt.Sprintf(
+					"; this is the most under-utilized of %d drainable node(s) — recommended to drain this one",
+					decision.FeasibleCandidates)
+			} else {
+				decision.Reason = base
+			}
+		} else {
+			decision.Reason = base + fmt.Sprintf(
+				"; however node %s is more under-utilized and is the recommended drain target instead",
+				decision.BetterCandidate)
+		}
 		return decision, nil
 	}
 
@@ -161,6 +184,88 @@ func (r *CarbonIdleResourceRecommender) evaluateConsolidation(ctx *framework.Rec
 		"draining node %s is not feasible — survivors cannot fit the load: %s",
 		candidateName, strings.Join(failed, "; "))
 	return decision, nil
+}
+
+func (r *CarbonIdleResourceRecommender) rankCandidate(
+	nodes map[string]*nodeCapacity, candidateName string, decision *consolidationDecision,
+) {
+	type cand struct {
+		name    string
+		cpu     int64
+		mem     int64
+	}
+	var feasible []cand
+	for name, n := range nodes {
+		if !(n.ready && n.schedulable) {
+			continue
+		}
+		if r.nodeDrainFeasible(nodes, name) {
+			feasible = append(feasible, cand{name: name, cpu: n.reschedulableCPUMilli, mem: n.reschedulableMemBytes})
+		}
+	}
+
+	decision.FeasibleCandidates = len(feasible)
+	if len(feasible) == 0 {
+		return
+	}
+
+	sort.Slice(feasible, func(i, j int) bool {
+		if feasible[i].cpu != feasible[j].cpu {
+			return feasible[i].cpu < feasible[j].cpu
+		}
+		if feasible[i].mem != feasible[j].mem {
+			return feasible[i].mem < feasible[j].mem
+		}
+		return feasible[i].name < feasible[j].name
+	})
+
+	best := feasible[0].name
+	for i, c := range feasible {
+		if c.name == candidateName {
+			decision.Rank = i + 1
+			break
+		}
+	}
+	decision.IsBestCandidate = (candidateName == best)
+	if !decision.IsBestCandidate {
+		decision.BetterCandidate = best
+	}
+}
+
+func (r *CarbonIdleResourceRecommender) nodeDrainFeasible(nodes map[string]*nodeCapacity, nodeName string) bool {
+	cand, ok := nodes[nodeName]
+	if !ok || !cand.ready || !cand.schedulable {
+		return false
+	}
+
+	schedulableTotal := 0
+	var remAllocCPU, remAllocMem, remReqCPU, remReqMem int64
+	for name, n := range nodes {
+		if !(n.ready && n.schedulable) {
+			continue
+		}
+		schedulableTotal++
+		if name == nodeName {
+			continue
+		}
+		remAllocCPU += n.allocatableCPUMilli
+		remAllocMem += n.allocatableMemBytes
+		remReqCPU += n.requestedCPUMilli
+		remReqMem += n.requestedMemBytes
+	}
+
+	if schedulableTotal <= int(r.minNodes) {
+		return false
+	}
+	if remAllocCPU == 0 { 
+		return false
+	}
+
+	usableCPU := int64(float64(remAllocCPU) * (1.0 - r.headroomFraction))
+	usableMem := int64(float64(remAllocMem) * (1.0 - r.headroomFraction))
+	projCPU := remReqCPU + cand.reschedulableCPUMilli
+	projMem := remReqMem + cand.reschedulableMemBytes
+	return projCPU <= usableCPU && projMem <= usableMem
 }
 
 func (r *CarbonIdleResourceRecommender) buildClusterCapacity(ctx *framework.RecommendationContext) (map[string]*nodeCapacity, error) {

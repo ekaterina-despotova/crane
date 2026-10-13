@@ -90,23 +90,33 @@ func (r *CarbonIdleResourceRecommender) recommendNode(ctx *framework.Recommendat
 		if err != nil {
 			klog.Warningf("%s: consolidation analysis failed for node %s: %v — falling back to idle check",
 				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, err)
-		} else if decision.Feasible {
-			ctx.Recommendation.Status.Action = "Delete"
-			ctx.Recommendation.Status.Description = decision.Reason
-			if decision.FreedNodeWatts > 0 {
-				ctx.Recommendation.Status.Description += fmt.Sprintf(
-					"; freeing this node reclaims ~%.2fW of measured node power", decision.FreedNodeWatts)
-			}
-
+		} else {
 			if infoBytes, mErr := json.Marshal(decision); mErr == nil {
 				ctx.Recommendation.Status.RecommendedValue = string(infoBytes)
 			}
-			klog.Infof("%s: node %s is a consolidation candidate: %s",
-				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
+
+			if decision.Feasible && decision.IsBestCandidate {
+				ctx.Recommendation.Status.Action = "Delete"
+				ctx.Recommendation.Status.Description = decision.Reason
+				if decision.FreedNodeWatts > 0 {
+					ctx.Recommendation.Status.Description += fmt.Sprintf(
+						"; freeing this node reclaims ~%.2fW of measured node power", decision.FreedNodeWatts)
+				}
+				klog.Infof("%s: node %s is the recommended consolidation target: %s",
+					r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
+				return nil
+			}
+
+			ctx.Recommendation.Status.Action = "None"
+			ctx.Recommendation.Status.Description = decision.Reason
+			if decision.Feasible {
+				klog.Infof("%s: node %s is drainable but not the best candidate (better: %s)",
+					r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.BetterCandidate)
+			} else {
+				klog.Infof("%s: node %s not a consolidation candidate: %s",
+					r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
+			}
 			return nil
-		} else {
-			klog.Infof("%s: node %s not a consolidation candidate: %s",
-				r.Name(), ctx.Recommendation.Spec.TargetRef.Name, decision.Reason)
 		}
 	}
 

@@ -15,7 +15,6 @@ func (s *apiServer) initRouter() {
 
 	v1 := s.Group("/api/v1")
 	{
-		//dashboard panels
 		if s.config.EnableGrafana {
 			dbshandler := dashboards.NewDashboardHandler(s.dashboardSrv)
 			dashboardsv1 := v1.Group("/dashboard")
@@ -25,9 +24,6 @@ func (s *apiServer) initRouter() {
 			}
 		}
 
-		// prometheus
-
-		// clusters
 		clustersv1 := v1.Group("/cluster")
 		{
 			clustersv1.GET("", clusterHandler.ListClusters)
@@ -37,21 +33,19 @@ func (s *apiServer) initRouter() {
 			clustersv1.GET(":clusterid", clusterHandler.GetCluster)
 		}
 
-		// namespaces
 		nsv1 := v1.Group("/namespaces")
 		{
 			nsv1.GET(":clusterid", clusterHandler.ListNamespaces)
 		}
 
-		// recommendations
 		recommendv1 := v1.Group("/recommendation")
 		{
 			recommendv1.GET("", recommendationHandler.ListRecommendations)
 			recommendv1.POST("/adopt/:namespace/:recommendationName", recommendationHandler.AdoptRecommendation)
 			recommendv1.POST("/drain-node/:namespace/:recommendationName", recommendationHandler.DrainNode)
+			recommendv1.GET("/drain-node/status/:nodeName", recommendationHandler.DrainNodeStatus)
 		}
 
-		// recommendationRules
 		recommendrulev1 := v1.Group("/recommendationRule")
 		{
 			recommendrulev1.GET("", recommendationHandler.ListRecommendationRules)
@@ -60,7 +54,6 @@ func (s *apiServer) initRouter() {
 			recommendrulev1.DELETE(":recommendationRuleName", recommendationHandler.DeleteRecommendationRule)
 		}
 
-		// prometheus API
 		prometheusapiv1 := v1.Group("/prometheus")
 		{
 			prometheusapiv1.GET("query", prometheusHandler.Query)
