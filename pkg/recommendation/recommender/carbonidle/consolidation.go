@@ -196,7 +196,7 @@ func (r *CarbonIdleResourceRecommender) rankCandidate(
 	}
 	var feasible []cand
 	for name, n := range nodes {
-		if !(n.ready && n.schedulable) {
+		if !n.ready {
 			continue
 		}
 		if r.nodeDrainFeasible(nodes, name) {
@@ -234,30 +234,31 @@ func (r *CarbonIdleResourceRecommender) rankCandidate(
 
 func (r *CarbonIdleResourceRecommender) nodeDrainFeasible(nodes map[string]*nodeCapacity, nodeName string) bool {
 	cand, ok := nodes[nodeName]
-	if !ok || !cand.ready || !cand.schedulable {
+	if !ok || !cand.ready {
 		return false
 	}
 
-	schedulableTotal := 0
+	survivorCount := 0
 	var remAllocCPU, remAllocMem, remReqCPU, remReqMem int64
 	for name, n := range nodes {
-		if !(n.ready && n.schedulable) {
-			continue
-		}
-		schedulableTotal++
 		if name == nodeName {
 			continue
 		}
+		if !(n.ready && n.schedulable) {
+			continue
+		}
+		survivorCount++
 		remAllocCPU += n.allocatableCPUMilli
 		remAllocMem += n.allocatableMemBytes
 		remReqCPU += n.requestedCPUMilli
 		remReqMem += n.requestedMemBytes
 	}
 
-	if schedulableTotal <= int(r.minNodes) {
+	// Enforce the floor on the number of schedulable nodes that would remain.
+	if survivorCount < int(r.minNodes) {
 		return false
 	}
-	if remAllocCPU == 0 { 
+	if survivorCount == 0 || remAllocCPU == 0 {
 		return false
 	}
 

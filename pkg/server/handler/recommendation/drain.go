@@ -23,9 +23,17 @@ type drainResult struct {
 
 
 const (
-	drainTimeout      = 90 * time.Second
-	drainPollInterval = 3 * time.Second
+	drainTimeout      = 120 * time.Second
+	drainPollInterval = 5 * time.Second
 )
+
+var systemDrainNamespaces = map[string]bool{
+	"kube-system": true,
+}
+
+func isSystemDrainNamespace(ns string) bool {
+	return systemDrainNamespaces[ns]
+}
 
 
 func cordonNode(ctx context.Context, clientset kubernetes.Interface, nodeName string) error {
@@ -40,38 +48,77 @@ func cordonNode(ctx context.Context, clientset kubernetes.Interface, nodeName st
 
 
 func drainNode(ctx context.Context, clientset kubernetes.Interface, nodeName string) (*drainResult, error) {
-	result := &drainResult{}
+	result := &drainResult{Cordoned: true}
+	evicted := map[string]bool{}
 
-	podList, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		FieldSelector: "spec.nodeName=" + nodeName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods on node %s: %w", nodeName, err)
-	}
-
-	var toEvict []corev1.Pod
-	for i := range podList.Items {
-		pod := podList.Items[i]
-		if reason := skipDrainReason(&pod); reason != "" {
-			result.SkippedPods = append(result.SkippedPods, fmt.Sprintf("%s/%s (%s)", pod.Namespace, pod.Name, reason))
-			continue
+	deadline := time.Now().Add(drainTimeout)
+	for {
+		podList, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+			FieldSelector: "spec.nodeName=" + nodeName,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list pods on node %s: %w", nodeName, err)
 		}
-		toEvict = append(toEvict, pod)
-	}
 
-	for i := range toEvict {
-		pod := toEvict[i]
-		if err := evictPod(ctx, clientset, &pod); err != nil {
-			klog.Warningf("drain: eviction of %s/%s failed: %v", pod.Namespace, pod.Name, err)
-			continue
+		var blocking []corev1.Pod
+		var systemLeft []corev1.Pod
+		for i := range podList.Items {
+			pod := podList.Items[i]
+			if skipDrainReason(&pod) != "" {
+				continue
+			}
+			if isSystemDrainNamespace(pod.Namespace) {
+				systemLeft = append(systemLeft, pod)
+				continue
+			}
+			blocking = append(blocking, pod)
 		}
-		result.EvictedPods = append(result.EvictedPods, fmt.Sprintf("%s/%s", pod.Namespace, pod.Name))
-		klog.Infof("drain: evicted %s/%s from node %s", pod.Namespace, pod.Name, nodeName)
+
+
+		for _, pod := range append(append([]corev1.Pod{}, blocking...), systemLeft...) {
+			key := pod.Namespace + "/" + pod.Name
+			if evicted[key] {
+				continue
+			}
+			if err := evictPod(ctx, clientset, &pod); err != nil {
+				klog.Warningf("drain: eviction of %s deferred: %v", key, err)
+				continue
+			}
+			evicted[key] = true
+			klog.Infof("drain: evicted %s from node %s", key, nodeName)
+		}
+
+		if len(blocking) == 0 {
+			for i := range systemLeft {
+				result.SkippedPods = append(result.SkippedPods,
+					fmt.Sprintf("%s/%s (system pod, will be removed with the node)", systemLeft[i].Namespace, systemLeft[i].Name))
+			}
+			for k := range evicted {
+				result.EvictedPods = append(result.EvictedPods, k)
+			}
+			result.RemainingPods = nil
+			return result, nil
+		}
+
+		if time.Now().After(deadline) {
+			for i := range blocking {
+				result.RemainingPods = append(result.RemainingPods,
+					fmt.Sprintf("%s/%s", blocking[i].Namespace, blocking[i].Name))
+			}
+			for k := range evicted {
+				result.EvictedPods = append(result.EvictedPods, k)
+			}
+			klog.Warningf("drain: timed out after %s with %d blocking pod(s) still on node %s",
+				drainTimeout, len(blocking), nodeName)
+			return result, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		case <-time.After(drainPollInterval):
+		}
 	}
-
-
-	result.RemainingPods = waitForPodsGone(ctx, clientset, nodeName)
-	return result, nil
 }
 
 
@@ -87,46 +134,6 @@ func evictPod(ctx context.Context, clientset kubernetes.Interface, pod *corev1.P
 		return nil 
 	}
 	return err
-}
-
-
-func waitForPodsGone(ctx context.Context, clientset kubernetes.Interface, nodeName string) []string {
-	deadline := time.Now().Add(drainTimeout)
-	for {
-		remaining := listReschedulablePods(ctx, clientset, nodeName)
-		if len(remaining) == 0 {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			klog.Warningf("drain: timed out after %s with %d pod(s) still on node %s", drainTimeout, len(remaining), nodeName)
-			return remaining
-		}
-		select {
-		case <-ctx.Done():
-			return remaining
-		case <-time.After(drainPollInterval):
-		}
-	}
-}
-
-
-func listReschedulablePods(ctx context.Context, clientset kubernetes.Interface, nodeName string) []string {
-	podList, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		FieldSelector: "spec.nodeName=" + nodeName,
-	})
-	if err != nil {
-		klog.Warningf("drain: failed to re-list pods on node %s: %v", nodeName, err)
-		return nil
-	}
-	var remaining []string
-	for i := range podList.Items {
-		pod := podList.Items[i]
-		if skipDrainReason(&pod) != "" {
-			continue
-		}
-		remaining = append(remaining, fmt.Sprintf("%s/%s", pod.Namespace, pod.Name))
-	}
-	return remaining
 }
 
 
