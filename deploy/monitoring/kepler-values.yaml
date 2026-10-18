@@ -1,17 +1,11 @@
-## Kepler helm values
-## Enables ServiceMonitor so kube-prometheus-stack auto-scrapes Kepler
-
 serviceMonitor:
   enabled: true
-  ## Must match the prometheus operator's serviceMonitorSelector (we set it to {} = any)
   labels:
     release: prometheus
 
-## Tolerate any taints so it runs on all nodes including system nodes
 tolerations:
   - operator: Exists
 
-## Container-level security context (privileged needed for eBPF/energy counters)
 securityContext:
   privileged: true
 
