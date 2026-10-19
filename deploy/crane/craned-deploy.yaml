@@ -137,7 +137,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v21
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v24
           imagePullPolicy: Always
           env:
             - name: TZ
