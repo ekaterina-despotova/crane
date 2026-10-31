@@ -66,6 +66,7 @@ data:
       - name: CarbonRightSizing
         config:
           energy-efficiency-target: "0.7"
+          energy-intensity-target: "10.0"
           observation-window-days: "7"
           cpu-percentile: "0.95"
           memory-percentile: "0.95"
@@ -137,7 +138,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v24
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v25
           imagePullPolicy: Always
           env:
             - name: TZ
