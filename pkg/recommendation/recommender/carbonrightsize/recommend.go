@@ -49,13 +49,27 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 	var oldContainers []corev1.Container
 	var descriptions []string
 
-	for _, c := range ctx.PodTemplate.Spec.Containers {
-		effRatio := r.getEfficiencyForPod(efficiencyList)
+	intensityList := ctx.InputValue(keyContainerIntensity)
 
-		if effRatio >= r.energyEfficiencyTarget {
-			klog.Infof("%s: container %s efficiency %.4f >= target %.4f, skipping",
+	for _, c := range ctx.PodTemplate.Spec.Containers {
+		intensity, haveIntensity := r.intensityForContainer(intensityList, c.Name)
+		if haveIntensity {
+			if intensity < r.energyIntensityTarget {
+				klog.Infof("%s: container %s intensity %.3f W/core < target %.3f, skipping",
+					r.Name(), c.Name, intensity, r.energyIntensityTarget)
+				continue
+			}
+			klog.Infof("%s: container %s intensity %.3f W/core >= target %.3f, right-sizing candidate",
+				r.Name(), c.Name, intensity, r.energyIntensityTarget)
+		} else {
+			effRatio := r.getEfficiencyForPod(efficiencyList)
+			if effRatio >= r.energyEfficiencyTarget {
+				klog.Infof("%s: container %s no intensity data; pod efficiency %.4f >= target %.4f, skipping",
+					r.Name(), c.Name, effRatio, r.energyEfficiencyTarget)
+				continue
+			}
+			klog.Infof("%s: container %s no intensity data; falling back to pod efficiency %.4f < target %.4f",
 				r.Name(), c.Name, effRatio, r.energyEfficiencyTarget)
-			continue
 		}
 
 		recCPU := r.computePercentile(cpuUsageList, r.cpuPercentile)
@@ -121,6 +135,10 @@ func (r *CarbonRightSizingRecommender) Recommend(ctx *framework.RecommendationCo
 			c.Name,
 			c.Resources.Requests.Cpu().String(), cpuQuantity.String(),
 			c.Resources.Requests.Memory().String(), memQuantity.String())
+		if haveIntensity {
+			desc += fmt.Sprintf(" (energy intensity %.3f W/core >= %.3f target)",
+				intensity, r.energyIntensityTarget)
+		}
 		descriptions = append(descriptions, desc)
 		klog.Infof("%s: %s", r.Name(), desc)
 	}
@@ -207,6 +225,20 @@ func (r *CarbonRightSizingRecommender) computeNeededReplicas(ctx *framework.Reco
 		needed = currentReplicas
 	}
 	return needed
+}
+
+func (r *CarbonRightSizingRecommender) intensityForContainer(intensityList []*common.TimeSeries, container string) (float64, bool) {
+	for _, ts := range intensityList {
+		name := getLabel(ts, "container")
+		if name != container {
+			continue
+		}
+		if len(ts.Samples) == 0 {
+			return 0, false
+		}
+		return ts.Samples[0].Value, true
+	}
+	return 0, false
 }
 
 func (r *CarbonRightSizingRecommender) getEfficiencyForPod(efficiencyList []*common.TimeSeries) float64 {

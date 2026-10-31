@@ -24,7 +24,12 @@ const (
 	keyCPUUsage         = "cpu-usage"
 	keyMemUsage         = "mem-usage"
 	keyEnergyEfficiency = "kepler-energy-efficiency-ratio"
+	keyContainerWatts     = "kepler-container-cpu-watts"
+	keyContainerCPUCores  = "container-cpu-cores"
+	keyContainerIntensity = "kepler-container-watts-per-core"
 )
+
+const minCoresForIntensity = 0.001
 
 const keplerAvailabilityExpr = `kepler_container_package_joules_total`
 
@@ -32,6 +37,11 @@ const (
 	keplerPodCPUJoulesExpr = `sum by (pod_name, container_namespace) (kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"})`
 	keplerPodCPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
 	keplerPodGPUWattsExpr  = `sum by (pod_name, container_namespace) (rate(kepler_container_other_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+)
+
+const (
+	keplerContainerWattsExpr = `sum by (container_name) (rate(kepler_container_package_joules_total{container_namespace="%s",pod_name=~"%s",mode="dynamic"}[5m]))`
+	containerCPUCoresExpr = `sum by (container) (rate(container_cpu_usage_seconds_total{namespace="%s",pod=~"%s",container!="",container!="POD"}[5m]))`
 )
 
 var expectedMetricKeys = []string{
@@ -84,12 +94,27 @@ func (r *CarbonRightSizingRecommender) CollectData(ctx *framework.Recommendation
 	}
 
 	r.collectPodEnergyMetrics(ctx, caller, ns, podNameRegex, start, now, step)
+	r.collectPodEnergyMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 
 	r.collectUtilizationMetrics(ctx, caller, ns, name, kind, start, now, step)
+
+	r.collectContainerIntensityMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 
 	return nil
 }
 
+// collectContainerIntensityMetrics gathers the per-container power and per-container
+// CPU usage used to compute the watts-per-core energy-intensity signal.
+func (r *CarbonRightSizingRecommender) collectContainerIntensityMetrics(
+	ctx *framework.RecommendationContext,
+	caller, namespace, podNameRegex string,
+	start, end time.Time, step time.Duration,
+) {
+	r.queryAndStore(ctx, caller, keyContainerWatts,
+		fmt.Sprintf(keplerContainerWattsExpr, namespace, podNameRegex), start, end, step)
+	r.queryAndStore(ctx, caller, keyContainerCPUCores,
+		fmt.Sprintf(containerCPUCoresExpr, namespace, podNameRegex), start, end, step)
+}
 func buildPodNameRegex(ctx *framework.RecommendationContext) string {
 	if len(ctx.Pods) == 0 {
 		return ""
@@ -170,8 +195,69 @@ func (r *CarbonRightSizingRecommender) PostProcessing(ctx *framework.Recommendat
 		klog.Warningf("%s: failed to compute energy-efficiency ratio: %v", r.Name(), err)
 	}
 
+	if err := r.computeContainerEnergyIntensity(ctx); err != nil {
+		klog.Warningf("%s: failed to compute container energy intensity: %v", r.Name(), err)
+	}
+
 	if err := r.validateMetricAvailability(ctx); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (r *CarbonRightSizingRecommender) computeContainerEnergyIntensity(ctx *framework.RecommendationContext) error {
+	wattsList := ctx.InputValue(keyContainerWatts)
+	coresList := ctx.InputValue(keyContainerCPUCores)
+
+	if len(wattsList) == 0 || len(coresList) == 0 {
+		return fmt.Errorf("missing per-container watts or CPU data for energy-intensity computation")
+	}
+
+	coresByContainer := make(map[string]float64, len(coresList))
+	for _, ts := range coresList {
+		name := getLabel(ts, "container")
+		if name == "" {
+			continue
+		}
+		coresByContainer[name] = avgSamples(ts.Samples)
+	}
+
+	var intensitySeries []*common.TimeSeries
+	for _, ts := range wattsList {
+		name := getLabel(ts, "container_name")
+		if name == "" {
+			name = getLabel(ts, "container")
+		}
+		if name == "" {
+			continue
+		}
+
+		avgWatts := avgSamples(ts.Samples)
+		avgCores := coresByContainer[name]
+
+		if avgCores < minCoresForIntensity {
+			klog.V(4).Infof("%s: container %s CPU %.5f cores below %.5f floor, skipping intensity",
+				r.Name(), name, avgCores, minCoresForIntensity)
+			continue
+		}
+
+		intensity := avgWatts / avgCores
+
+		intensitySeries = append(intensitySeries, &common.TimeSeries{
+			Labels: []common.Label{
+				{Name: "container", Value: name},
+				{Name: "metric", Value: "watts_per_core"},
+			},
+			Samples: []common.Sample{{Value: intensity, Timestamp: time.Now().Unix()}},
+		})
+
+		klog.Infof("%s: container %s energy intensity = %.3f W/core (%.3fW / %.4f cores)",
+			r.Name(), name, intensity, avgWatts, avgCores)
+	}
+
+	if len(intensitySeries) > 0 {
+		ctx.AddInputValue(keyContainerIntensity, intensitySeries)
 	}
 
 	return nil

@@ -15,6 +15,7 @@ var _ recommender.Recommender = &CarbonRightSizingRecommender{}
 type CarbonRightSizingRecommender struct {
 	base.BaseRecommender
 	energyEfficiencyTarget float64
+	energyIntensityTarget  float64
 	observationDays        int64
 	cpuPercentile          float64
 	memoryPercentile       float64
@@ -43,6 +44,11 @@ func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule an
 	rec = config.MergeRecommenderConfigFromRule(rec, recommendationRule)
 
 	energyEfficiencyTarget, err := rec.GetConfigFloat("energy-efficiency-target", 0.7)
+	if err != nil {
+		return nil, err
+	}
+
+	energyIntensityTarget, err := rec.GetConfigFloat("energy-intensity-target", 10.0)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +110,7 @@ func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule an
 	return &CarbonRightSizingRecommender{
 		BaseRecommender:          *base.NewBaseRecommender(rec),
 		energyEfficiencyTarget:   energyEfficiencyTarget,
+		energyIntensityTarget:    energyIntensityTarget,
 		observationDays:          observationDays,
 		cpuPercentile:            cpuPercentile,
 		memoryPercentile:         memoryPercentile,
