@@ -32,5 +32,27 @@ jobs:
         working-directory: ./terraform/deploy-kubernetes-cluster
         run : |
           terraform init
-          terraform destroy -auto-approve
+
+          cancel_rolling_upgrades() {
+            NRG=$(az aks show -g demoCarbonrg -n demo-carbon-aks --query nodeResourceGroup -o tsv 2>/dev/null || true)
+            [ -z "$NRG" ] && return 0
+            for VMSS in $(az vmss list -g "$NRG" --query '[].name' -o tsv 2>/dev/null); do
+              STATUS=$(az vmss rolling-upgrade get-latest -g "$NRG" -n "$VMSS" --query runningStatus.code -o tsv 2>/dev/null || true)
+              if [ "$STATUS" = "RollingForward" ]; then
+                echo "Cancelling stuck rolling upgrade on $VMSS"
+                az vmss rolling-upgrade cancel -g "$NRG" -n "$VMSS" || true
+              fi
+            done
+          }
+
+          for attempt in 1 2 3; do
+            echo "=== destroy attempt $attempt ==="
+            cancel_rolling_upgrades
+            if terraform destroy -auto-approve; then
+              exit 0
+            fi
+            echo "destroy failed; retrying in 30s"
+            sleep 30
+          done
+          exit 1
 
