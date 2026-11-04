@@ -121,7 +121,8 @@ func (h *Handler) AdoptRecommendation(c *gin.Context) {
 	if string(recommendationExist.Spec.Type) == recommender.ReplicasRecommender ||
 		string(recommendationExist.Spec.Type) == recommender.ResourceRecommender ||
 		string(recommendationExist.Spec.Type) == recommender.CarbonIdleResourceRecommender ||
-		string(recommendationExist.Spec.Type) == recommender.CarbonRightSizingRecommender {
+		string(recommendationExist.Spec.Type) == recommender.CarbonRightSizingRecommender ||
+		string(recommendationExist.Spec.Type) == recommender.CarbonHorizontalScalingRecommender {
 		gvr, err := utils.GetGroupVersionResource(h.discoveryClient, recommendationExist.Spec.TargetRef.APIVersion, recommendationExist.Spec.TargetRef.Kind)
 		if err != nil {
 			ginwrapper.WriteResponse(c, err, nil)

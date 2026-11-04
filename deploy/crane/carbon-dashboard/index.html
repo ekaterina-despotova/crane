@@ -130,7 +130,8 @@
                             <select id="filter-type" onchange="filterRecommendations()">
                                 <option value="all">All Types</option>
                                 <option value="CarbonIdleResource">Idle Resource</option>
-                                <option value="CarbonRightSizing">Right Sizing</option>
+                                <option value="CarbonRightSizing">Right Sizing (Vertical)</option>
+                                <option value="CarbonHorizontalScaling">Horizontal Scaling</option>
                                 <option value="CarbonTemporalShifting">Temporal Shifting</option>
                                 <option value="CarbonSpatialShifting">Spatial Shifting</option>
                             </select>
@@ -328,18 +329,21 @@
             allRecommendations = items.filter(r => 
                 r.spec.type === 'CarbonIdleResource' || 
                 r.spec.type === 'CarbonRightSizing' || 
+                r.spec.type === 'CarbonHorizontalScaling' ||
                 r.spec.type === 'CarbonTemporalShifting' ||
                 r.spec.type === 'CarbonSpatialShifting'
             );
 
             const idle = allRecommendations.filter(r => r.spec.type === 'CarbonIdleResource' && r.status?.action === 'Delete').length;
             const rightsize = allRecommendations.filter(r => r.spec.type === 'CarbonRightSizing' && r.status?.action === 'Patch').length;
+            const horizontal = allRecommendations.filter(r => r.spec.type === 'CarbonHorizontalScaling' && r.status?.action === 'Patch').length;
             const temporal = allRecommendations.filter(r => r.spec.type === 'CarbonTemporalShifting' && r.status?.action === 'Patch').length;
             const spatial = allRecommendations.filter(r => r.spec.type === 'CarbonSpatialShifting' && r.status?.action === 'Patch').length;
 
             document.getElementById('rec-summary-cards').innerHTML = `
                 <div class="card"><div class="card-label">Idle Resources (Delete)</div><div class="card-value red">${idle}</div></div>
-                <div class="card"><div class="card-label">Right-Sizing (Patch)</div><div class="card-value orange">${rightsize}</div></div>
+                <div class="card"><div class="card-label">Right-Sizing / Vertical (Patch)</div><div class="card-value orange">${rightsize}</div></div>
+                <div class="card"><div class="card-label">Horizontal Scaling (Patch)</div><div class="card-value orange">${horizontal}</div></div>
                 <div class="card"><div class="card-label">Temporal Shifting</div><div class="card-value green">${temporal}</div></div>
                 <div class="card"><div class="card-label">Spatial Shifting</div><div class="card-value green">${spatial}</div></div>
                 <div class="card"><div class="card-label">Total Analyzed</div><div class="card-value">${allRecommendations.length}</div></div>

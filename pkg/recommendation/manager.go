@@ -19,15 +19,14 @@ import (
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/service"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/volume"
 
+	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonhorizontalscale"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonidle"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonrightsize"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonshift"
 )
 
 type RecommenderManager interface {
-	// GetRecommender return a registered recommender
 	GetRecommender(recommenderName string) (recommender.Recommender, error)
-	// GetRecommenderWithRule return a registered recommender, its config merged with recommendationRule
 	GetRecommenderWithRule(recommenderName string, recommendationRule analysisv1alph1.RecommendationRule) (recommender.Recommender, error)
 }
 
@@ -36,7 +35,7 @@ func NewRecommenderManager(recommendationConfiguration string) RecommenderManage
 		recommendationConfiguration: recommendationConfiguration,
 	}
 
-	m.loadConfigFile() // nolint:errcheck
+	m.loadConfigFile() 
 
 	go m.watchConfigFile()
 
@@ -136,56 +135,48 @@ func (m *manager) loadConfigFile() error {
 func Run(ctx *framework.RecommendationContext, recommender recommender.Recommender) error {
 	klog.Infof("%s: start to run recommender %q.", ctx.String(), recommender.Name())
 
-	// 1. Filter phase
 	err := recommender.Filter(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at filter phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 2. PrePrepare phase
 	err = recommender.CheckDataProviders(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at prepare check data provider phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 3. Prepare phase
 	err = recommender.CollectData(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at prepare collect data phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 4. PostPrepare phase
 	err = recommender.PostProcessing(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at prepare data post processing phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 5. PreRecommend phase
 	err = recommender.PreRecommend(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at pre commend phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 6. Recommend phase
 	err = recommender.Recommend(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at recommend phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 7. PostRecommend phase, add policy
 	err = recommender.Policy(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at recommend policy phase: %v", ctx.String(), recommender.Name(), err)
 		return err
 	}
 
-	// 8. Observe phase
 	err = recommender.Observe(ctx)
 	if err != nil {
 		klog.Errorf("%s: recommender %q failed at observe phase: %v", ctx.String(), recommender.Name(), err)

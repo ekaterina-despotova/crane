@@ -94,7 +94,6 @@ func (r *CarbonRightSizingRecommender) CollectData(ctx *framework.Recommendation
 	}
 
 	r.collectPodEnergyMetrics(ctx, caller, ns, podNameRegex, start, now, step)
-	r.collectPodEnergyMetrics(ctx, caller, ns, podNameRegex, start, now, step)
 
 	r.collectUtilizationMetrics(ctx, caller, ns, name, kind, start, now, step)
 
@@ -103,8 +102,6 @@ func (r *CarbonRightSizingRecommender) CollectData(ctx *framework.Recommendation
 	return nil
 }
 
-// collectContainerIntensityMetrics gathers the per-container power and per-container
-// CPU usage used to compute the watts-per-core energy-intensity signal.
 func (r *CarbonRightSizingRecommender) collectContainerIntensityMetrics(
 	ctx *framework.RecommendationContext,
 	caller, namespace, podNameRegex string,

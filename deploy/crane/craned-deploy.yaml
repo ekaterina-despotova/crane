@@ -71,9 +71,6 @@ data:
           memory-percentile: "0.95"
           min-cpu-millicores: "10"
           min-memory-mib: "16"
-          enable-replica-rightsizing: "true"
-          replica-target-cores: "0.5"  
-          min-replicas: "1"           
           protected-label: "carbon.crane.io/protected"
           protected-namespaces: "kube-system,crane-system,monitoring,kepler,loadgen"
         acceptedResources:
@@ -82,6 +79,19 @@ data:
           - kind: StatefulSet
             apiVersion: apps/v1
           - kind: DaemonSet
+            apiVersion: apps/v1
+      - name: CarbonHorizontalScaling
+        config:
+          observation-window-days: "7"
+          cpu-percentile: "0.95"
+          replica-target-cores: "0.5"
+          min-replicas: "1"
+          protected-label: "carbon.crane.io/protected"
+          protected-namespaces: "kube-system,crane-system,monitoring,kepler,loadgen"
+        acceptedResources:
+          - kind: Deployment
+            apiVersion: apps/v1
+          - kind: StatefulSet
             apiVersion: apps/v1
       - name: CarbonTemporalShifting
         config:
@@ -137,7 +147,7 @@ spec:
       serviceAccountName: craned
       containers:
         - name: craned
-          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v25
+          image: ekaterinadespotova/crane-kepler:carbon-recommenders-v27
           imagePullPolicy: Always
           env:
             - name: TZ

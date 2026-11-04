@@ -23,11 +23,6 @@ type CarbonRightSizingRecommender struct {
 	minCPUMillicores int64
 	minMemoryBytes   int64
 
-
-	enableReplicaRightsizing bool    
-	replicaTargetCores       float64 
-	minReplicas              int32   
-	
 	protectedLabel      string
 	protectedNamespaces []string
 }
@@ -78,24 +73,6 @@ func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule an
 		return nil, err
 	}
 
-	enableReplicaRightsizing, err := rec.GetConfigBool("enable-replica-rightsizing", true)
-	if err != nil {
-		return nil, err
-	}
-
-	replicaTargetCores, err := rec.GetConfigFloat("replica-target-cores", 0.5)
-	if err != nil {
-		return nil, err
-	}
-
-	minReplicas, err := rec.GetConfigInt("min-replicas", 1)
-	if err != nil {
-		return nil, err
-	}
-	if minReplicas < 1 {
-		minReplicas = 1 
-	}
-
 	protectedLabel := rec.GetConfigString("protected-label", "carbon.crane.io/protected")
 
 	var protectedNamespaces []string
@@ -108,18 +85,15 @@ func NewCarbonRightSizingRecommender(rec apis.Recommender, recommendationRule an
 	}
 
 	return &CarbonRightSizingRecommender{
-		BaseRecommender:          *base.NewBaseRecommender(rec),
-		energyEfficiencyTarget:   energyEfficiencyTarget,
-		energyIntensityTarget:    energyIntensityTarget,
-		observationDays:          observationDays,
-		cpuPercentile:            cpuPercentile,
-		memoryPercentile:         memoryPercentile,
-		minCPUMillicores:         minCPU,
-		minMemoryBytes:           minMem * 1024 * 1024,
-		enableReplicaRightsizing: enableReplicaRightsizing,
-		replicaTargetCores:       replicaTargetCores,
-		minReplicas:              int32(minReplicas),
-		protectedLabel:           protectedLabel,
-		protectedNamespaces:      protectedNamespaces,
+		BaseRecommender:        *base.NewBaseRecommender(rec),
+		energyEfficiencyTarget: energyEfficiencyTarget,
+		energyIntensityTarget:  energyIntensityTarget,
+		observationDays:        observationDays,
+		cpuPercentile:          cpuPercentile,
+		memoryPercentile:       memoryPercentile,
+		minCPUMillicores:       minCPU,
+		minMemoryBytes:         minMem * 1024 * 1024,
+		protectedLabel:         protectedLabel,
+		protectedNamespaces:    protectedNamespaces,
 	}, nil
 }

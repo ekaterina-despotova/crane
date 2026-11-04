@@ -46,3 +46,6 @@ override.tf.json
 # CLI config
 .terraformrc
 terraform.rc
+
+deploy-kepler-estimator.sh
+kepler-values-fake.yaml

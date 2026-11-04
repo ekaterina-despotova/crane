@@ -22,8 +22,11 @@ const (
 	// CarbonIdleResourceRecommender name
 	CarbonIdleResourceRecommender string = "CarbonIdleResource"
 
-	// CarbonRightSizingRecommender name
+	// CarbonRightSizingRecommender name (vertical: container resource requests/limits)
 	CarbonRightSizingRecommender string = "CarbonRightSizing"
+
+	// CarbonHorizontalScalingRecommender name (horizontal: replica count)
+	CarbonHorizontalScalingRecommender string = "CarbonHorizontalScaling"
 
 	// CarbonTemporalShiftingRecommender name
 	CarbonTemporalShiftingRecommender string = "CarbonTemporalShifting"

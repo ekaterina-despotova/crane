@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	// Blank imports trigger init() registration for each recommender.
+	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonhorizontalscale"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonidle"
 	_ "github.com/gocrane/crane/pkg/recommendation/recommender/carbonrightsize"
 )
@@ -28,7 +28,6 @@ func TestCarbonRecommenderRegistration(t *testing.T) {
 		assert.NotNil(t, instance)
 		assert.Equal(t, recommender.CarbonIdleResourceRecommender, instance.Name())
 
-		// Verify the instance implements the Recommender interface.
 		var _ recommender.Recommender = instance
 	})
 
@@ -40,7 +39,17 @@ func TestCarbonRecommenderRegistration(t *testing.T) {
 		assert.NotNil(t, instance)
 		assert.Equal(t, recommender.CarbonRightSizingRecommender, instance.Name())
 
-		// Verify the instance implements the Recommender interface.
+		var _ recommender.Recommender = instance
+	})
+
+	t.Run("CarbonHorizontalScaling returns valid instance", func(t *testing.T) {
+		instance, err := recommender.GetRecommenderProvider(
+			recommender.CarbonHorizontalScalingRecommender, emptyRec, emptyRule,
+		)
+		require.NoError(t, err)
+		assert.NotNil(t, instance)
+		assert.Equal(t, recommender.CarbonHorizontalScalingRecommender, instance.Name())
+
 		var _ recommender.Recommender = instance
 	})
 }
