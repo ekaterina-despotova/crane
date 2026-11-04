@@ -52,7 +52,10 @@ jobs:
             --overwrite-existing
 
       - name: Shrink AKS metrics-server requests (node-drain headroom)
-        run: kubectl apply -f deploy/aks/metrics-server-config.yaml
+        run: |
+          kubectl apply -f deploy/aks/metrics-server-config.yaml
+          kubectl rollout restart -n kube-system deployment metrics-server
+          kubectl rollout status -n kube-system deployment metrics-server --timeout=180s
 
       - name: Checkout AKS application
         uses: actions/checkout@v4
