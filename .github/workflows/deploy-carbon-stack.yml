@@ -164,6 +164,9 @@ jobs:
       - name: Apply CarbonRightSizing rule
         run: kubectl apply -f examples/analytics/carbon-rightsize-rule.yaml
 
+      - name: Apply CarbonHorizontalScaling rule
+        run: kubectl apply -f examples/analytics/carbon-horizontalscale-rule.yaml
+
       - name: Apply CarbonTemporalShifting rule
         run: kubectl apply -f examples/analytics/carbon-loadshift-rule.yaml
 
