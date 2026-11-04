@@ -93,7 +93,7 @@ spec:
               mountPath: /usr/share/nginx/carbon
           resources:
             requests:
-              cpu: 50m
+              cpu: 10m          # was 50m; observed use ~1m
               memory: 64Mi
             limits:
               cpu: 200m

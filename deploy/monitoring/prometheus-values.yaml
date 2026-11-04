@@ -5,7 +5,7 @@ grafana:
     type: ClusterIP
   resources:
     requests:
-      cpu: 50m
+      cpu: 20m          # was 50m; observed use ~12m (frees request headroom for node-idle drain)
       memory: 192Mi
     limits:
       cpu: 200m
@@ -42,7 +42,7 @@ prometheus:
               storage: 5Gi
     resources:
       requests:
-        cpu: 200m
+        cpu: 50m        # was 200m; observed use ~18m (limit stays 1000m for query/compaction bursts)
         memory: 512Mi
       limits:
         cpu: 1000m
@@ -75,7 +75,7 @@ kube-state-metrics:
 prometheusOperator:
   resources:
     requests:
-      cpu: 50m
+      cpu: 10m          # was 50m; observed use ~2m
       memory: 128Mi
     limits:
       cpu: 200m

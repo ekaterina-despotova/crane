@@ -51,6 +51,9 @@ jobs:
             --name ${{ steps.tf_outputs.outputs.cluster_name }} \
             --overwrite-existing
 
+      - name: Shrink AKS metrics-server requests (node-drain headroom)
+        run: kubectl apply -f deploy/aks/metrics-server-config.yaml
+
       - name: Checkout AKS application
         uses: actions/checkout@v4
         with:
